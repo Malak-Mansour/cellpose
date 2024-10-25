@@ -71,7 +71,7 @@ def make_bwr():
     r = np.append(np.linspace(0, 255, 128), 255 * np.ones(128))[:, np.newaxis]
     g = np.append(np.linspace(0, 255, 128),
                   np.linspace(0, 255, 128)[::-1])[:, np.newaxis]
-    color = np.concatenate((r, g, b), axis=-1).astype(np.uint8)
+    color = np.concatenate((r, g, b), axis=-1).astype("uint8")
     bwr = pg.ColorMap(pos=np.linspace(0.0, 255, 256), color=color)
     return bwr
 
@@ -128,7 +128,7 @@ def make_spectral():
         82, 90, 98, 106, 115, 123, 131, 139, 148, 156, 164, 172, 180, 189, 197, 205,
         213, 222, 230, 238, 246, 254
     ])
-    color = (np.vstack((r, g, b)).T).astype(np.uint8)
+    color = (np.vstack((r, g, b)).T).astype("uint8")
     spectral = pg.ColorMap(pos=np.linspace(0.0, 255, 256), color=color)
     return spectral
 
@@ -138,7 +138,7 @@ def make_cmap(cm=0):
     r = np.arange(0, 256)
     color = np.zeros((256, 3))
     color[:, cm] = r
-    color = color.astype(np.uint8)
+    color = color.astype("uint8")
     cmap = pg.ColorMap(pos=np.linspace(0.0, 255, 256), color=color)
     return cmap
 
@@ -271,13 +271,13 @@ class MainW(QMainWindow):
 
         if MATPLOTLIB:
             self.colormap = (plt.get_cmap("gist_ncar")(np.linspace(0.0, .9, 1000000)) *
-                             255).astype(np.uint8)
+                             255).astype("uint8")
             np.random.seed(42)  # make colors stable
             self.colormap = self.colormap[np.random.permutation(1000000)]
         else:
             np.random.seed(42)  # make colors stable
             self.colormap = ((np.random.rand(1000000, 3) * 0.8 + 0.1) * 255).astype(
-                np.uint8)
+                "uint8")
         self.NZ = 1
         self.restore = None
         self.ratio = 1.
@@ -1216,10 +1216,10 @@ class MainW(QMainWindow):
         self.stack = np.zeros((1, self.Ly, self.Lx, 3))
         self.Lyr, self.Lxr = self.Ly, self.Lx
         self.Ly0, self.Lx0 = self.Ly, self.Lx
-        self.radii = 0 * np.ones((self.Ly, self.Lx, 4), np.uint8)
-        self.layerz = 0 * np.ones((self.Ly, self.Lx, 4), np.uint8)
-        self.cellpix = np.zeros((1, self.Ly, self.Lx), np.uint16)
-        self.outpix = np.zeros((1, self.Ly, self.Lx), np.uint16)
+        self.radii = 0 * np.ones((self.Ly, self.Lx, 4), "uint8")
+        self.layerz = 0 * np.ones((self.Ly, self.Lx, 4), "uint8")
+        self.cellpix = np.zeros((1, self.Ly, self.Lx), "uint16")
+        self.outpix = np.zeros((1, self.Ly, self.Lx), "bool")
         if self.restore and "upsample" in self.restore:
             self.cellpix_resize = self.cellpix
             self.cellpix_orig = self.cellpix
@@ -1278,17 +1278,17 @@ class MainW(QMainWindow):
         self.prev_selected = 0
         self.selected = 0
         if self.restore and "upsample" in self.restore:
-            self.layerz = 0 * np.ones((self.Lyr, self.Lxr, 4), np.uint8)
-            self.cellpix = np.zeros((self.NZ, self.Lyr, self.Lxr), np.uint16)
-            self.outpix = np.zeros((self.NZ, self.Lyr, self.Lxr), np.uint16)
+            self.layerz = 0 * np.ones((self.Lyr, self.Lxr, 4), "uint8")
+            self.cellpix = np.zeros((self.NZ, self.Lyr, self.Lxr), "uint16")
+            self.outpix = np.zeros((self.NZ, self.Lyr, self.Lxr), "bool")
             self.cellpix_resize = self.cellpix.copy()
             self.outpix_resize = self.outpix.copy()
-            self.cellpix_orig = np.zeros((self.NZ, self.Ly0, self.Lx0), np.uint16)
-            self.outpix_orig = np.zeros((self.NZ, self.Ly0, self.Lx0), np.uint16)
+            self.cellpix_orig = np.zeros((self.NZ, self.Ly0, self.Lx0), "uint16")
+            self.outpix_orig = np.zeros((self.NZ, self.Ly0, self.Lx0), "bool")
         else:
-            self.layerz = 0 * np.ones((self.Ly, self.Lx, 4), np.uint8)
-            self.cellpix = np.zeros((self.NZ, self.Ly, self.Lx), np.uint16)
-            self.outpix = np.zeros((self.NZ, self.Ly, self.Lx), np.uint16)
+            self.layerz = 0 * np.ones((self.Ly, self.Lx, 4), "uint8")
+            self.cellpix = np.zeros((self.NZ, self.Ly, self.Lx), "uint16")
+            self.outpix = np.zeros((self.NZ, self.Ly, self.Lx), "bool")
 
         self.cellcolors = np.array([255, 255, 255])[np.newaxis, :]
         self.ncells = 0
@@ -1317,22 +1317,26 @@ class MainW(QMainWindow):
             idx = self.selected
             if idx < self.ncells + 1:
                 z = self.currentZ
-                self.layerz[self.cellpix[z] == idx] = np.append(
+                cp = self.cellpix[z] == idx
+                self.layerz[cp] = np.append(
                     self.cellcolors[idx], self.opacity)
                 if self.outlinesOn:
-                    self.layerz[self.outpix[z] == idx] = np.array(self.outcolor).astype(
-                        np.uint8)
+                    op = cp * self.outpix
+                    self.layerz[op] = np.array(self.outcolor).astype(
+                        "uint8")
                     #[0,0,0,self.opacity])
                 self.update_layer()
         self.selected = 0
 
     def unselect_cell_multi(self, idx):
         z = self.currentZ
-        self.layerz[self.cellpix[z] == idx] = np.append(self.cellcolors[idx],
+        cp = self.cellpix[z] == idx
+        self.layerz[cp] = np.append(self.cellcolors[idx],
                                                         self.opacity)
         if self.outlinesOn:
-            self.layerz[self.outpix[z] == idx] = np.array(self.outcolor).astype(
-                np.uint8)
+            op = cp * self.outpix
+            self.layerz[op] = np.array(self.outcolor).astype(
+                "uint8")
             # [0,0,0,self.opacity])
         self.update_layer()
 
@@ -1363,18 +1367,17 @@ class MainW(QMainWindow):
             zextent = [0]
         for z in zextent:
             cp = self.cellpix[z] == idx
-            op = self.outpix[z] == idx
             # remove from self.cellpix and self.outpix
+            op = cp * self.outpix[z]
             self.cellpix[z, cp] = 0
-            self.outpix[z, op] = 0
+            self.outpix[z, cp] = 0
             if z == self.currentZ:
                 # remove from mask layer
                 self.layerz[cp] = np.array([0, 0, 0, 0])
 
         # reduce other pixels by -1
         self.cellpix[self.cellpix > idx] -= 1
-        self.outpix[self.outpix > idx] -= 1
-
+        
         if self.NZ == 1:
             self.removed_cell = [
                 self.ismanual[idx - 1], self.cellcolors[idx],
@@ -1449,18 +1452,20 @@ class MainW(QMainWindow):
         self.selected = idx
         if self.selected != self.prev_selected:
             for z in range(self.NZ):
-                ar0, ac0 = np.nonzero(self.cellpix[z] == self.prev_selected)
-                ar1, ac1 = np.nonzero(self.cellpix[z] == self.selected)
+                cp0 = self.cellpix[z] == self.prev_selected
+                cp1 = self.cellpix[z] == self.prev_selected
+                ar0, ac0 = np.nonzero(cp0)
+                ar1, ac1 = np.nonzero(cp1)
                 touching = np.logical_and((ar0[:, np.newaxis] - ar1) < 3,
                                           (ac0[:, np.newaxis] - ac1) < 3).sum()
                 ar = np.hstack((ar0, ar1))
                 ac = np.hstack((ac0, ac1))
-                vr0, vc0 = np.nonzero(self.outpix[z] == self.prev_selected)
-                vr1, vc1 = np.nonzero(self.outpix[z] == self.selected)
+                vr0, vc0 = np.nonzero(cp0 * self.outpix)
+                vr1, vc1 = np.nonzero(cp1 * self.outpix)
                 self.outpix[z, vr0, vc0] = 0
                 self.outpix[z, vr1, vc1] = 0
                 if touching > 0:
-                    mask = np.zeros((np.ptp(ar) + 4, np.ptp(ac) + 4), np.uint8)
+                    mask = np.zeros((np.ptp(ar) + 4, np.ptp(ac) + 4), "uint8")
                     mask[ar - ar.min() + 2, ac - ac.min() + 2] = 1
                     contours = cv2.findContours(mask, cv2.RETR_EXTERNAL,
                                                 cv2.CHAIN_APPROX_NONE)
@@ -1650,7 +1655,7 @@ class MainW(QMainWindow):
                 self.img.setImage(image, autoLevels=False, lut=self.cmap[0])
                 self.img.setLevels(self.saturation[0][self.currentZ])
         else:
-            image = np.zeros((self.Ly, self.Lx), np.uint8)
+            image = np.zeros((self.Ly, self.Lx), "uint8")
             if len(self.flows) >= self.view - 1 and len(self.flows[self.view - 1]) > 0:
                 image = self.flows[self.view - 1][self.currentZ]
             if self.view > 1:
@@ -1715,7 +1720,7 @@ class MainW(QMainWindow):
             vr = stroke[:, 1]
             vc = stroke[:, 2]
             # get points inside drawn points
-            mask = np.zeros((np.ptp(vr) + 4, np.ptp(vc) + 4), np.uint8)
+            mask = np.zeros((np.ptp(vr) + 4, np.ptp(vc) + 4), "uint8")
             pts = np.stack((vc - vc.min() + 2, vr - vr.min() + 2),
                            axis=-1)[:, np.newaxis, :]
             mask = cv2.fillPoly(mask, [pts], (255, 0, 0))
@@ -1735,7 +1740,7 @@ class MainW(QMainWindow):
             elif ioverlap.sum() > 0:
                 ar, ac = ar[~ioverlap], ac[~ioverlap]
                 # compute outline of new mask
-                mask = np.zeros((np.ptp(ar) + 4, np.ptp(ac) + 4), np.uint8)
+                mask = np.zeros((np.ptp(ar) + 4, np.ptp(ac) + 4), "uint8")
                 mask[ar - ar.min() + 2, ac - ac.min() + 2] = 1
                 contours = cv2.findContours(mask, cv2.RETR_EXTERNAL,
                                             cv2.CHAIN_APPROX_NONE)
@@ -1781,7 +1786,7 @@ class MainW(QMainWindow):
                 # get upsampled mask
                 vrr = (vr.copy() * self.ratio).astype(int)
                 vcr = (vc.copy() * self.ratio).astype(int)
-                mask = np.zeros((np.ptp(vrr) + 4, np.ptp(vcr) + 4), np.uint8)
+                mask = np.zeros((np.ptp(vrr) + 4, np.ptp(vcr) + 4), "uint8")
                 pts = np.stack((vcr - vcr.min() + 2, vrr - vrr.min() + 2),
                                axis=-1)[:, np.newaxis, :]
                 mask = cv2.fillPoly(mask, [pts], (255, 0, 0))
@@ -1809,7 +1814,7 @@ class MainW(QMainWindow):
         self.diameter = float(self.Diameter.text())
         self.pr = int(float(self.Diameter.text()))
         self.radii_padding = int(self.pr * 1.25)
-        self.radii = np.zeros((self.Ly + self.radii_padding, self.Lx, 4), np.uint8)
+        self.radii = np.zeros((self.Ly + self.radii_padding, self.Lx, 4), "uint8")
         yy, xx = disk([self.Ly + self.radii_padding / 2 - 1, self.pr / 2 + 1],
                       self.pr / 2, self.Ly + self.radii_padding, self.Lx)
         # rgb(150,50,150)
@@ -1849,11 +1854,11 @@ class MainW(QMainWindow):
                     self.outpix = self.outpix_orig.copy()
 
         #print(self.cellpix.shape, self.outpix.shape, self.cellpix.max(), self.outpix.max())
-        self.layerz = np.zeros((self.Ly, self.Lx, 4), np.uint8)
+        self.layerz = np.zeros((self.Ly, self.Lx, 4), "uint8")
         if self.masksOn:
             self.layerz[..., :3] = self.cellcolors[self.cellpix[self.currentZ], :]
             self.layerz[..., 3] = self.opacity * (self.cellpix[self.currentZ]
-                                                  > 0).astype(np.uint8)
+                                                  > 0).astype("uint8")
             if self.selected > 0:
                 self.layerz[self.cellpix[self.currentZ] == self.selected] = np.array(
                     [255, 255, 255, self.opacity])
@@ -1870,7 +1875,7 @@ class MainW(QMainWindow):
 
         if self.outlinesOn:
             self.layerz[self.outpix[self.currentZ] > 0] = np.array(
-                self.outcolor).astype(np.uint8)
+                self.outcolor).astype("uint8")
 
     def set_restore_button(self):
         keys = self.denoise_text
