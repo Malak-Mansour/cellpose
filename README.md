@@ -88,6 +88,12 @@ cellpose relies on the following excellent packages (which are automatically ins
 - [fastremap](https://github.com/seung-lab/fastremap/)
 - [fill_voids](https://github.com/seung-lab/fill_voids/)
 
+
+conda env create -f environment.yml
+
+conda activate cellpose
+
+
 ### Option 1: Installation Instructions with conda 
 
 If you have an older `cellpose` environment you can remove it with `conda env remove -n cellpose` before creating a new one.

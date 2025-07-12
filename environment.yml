@@ -26,4 +26,6 @@ dependencies:
     - dask_jobqueue
     - bokeh
     - fill-voids
+    - scikit-image
+    - matplotlib
   
