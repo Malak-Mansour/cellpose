@@ -30,7 +30,7 @@ def _loss_fn_class(lbl, y, class_weights=None):
     
     return loss3
 
-def _loss_fn_seg(lbl, y, device):
+def _loss_fn_seg(lbl, y, device, tn_mask=None):
     """
     Calculates the loss function between true labels lbl and prediction y.
 
@@ -45,12 +45,32 @@ def _loss_fn_seg(lbl, y, device):
     """
     criterion = nn.MSELoss(reduction="mean")
     criterion2 = nn.BCEWithLogitsLoss(reduction="mean")
+    # veci = 5. * lbl[:, -2:]
+    # loss = criterion(y[:, -3:-1], veci)
+    # loss /= 2.
+    # loss2 = criterion2(y[:, -1], (lbl[:, -3] > 0.5).to(y.dtype))
+    # loss = loss + loss2
+    # return loss
+
+
+    # Loss on flows
     veci = 5. * lbl[:, -2:]
-    loss = criterion(y[:, -3:-1], veci)
-    loss /= 2.
-    loss2 = criterion2(y[:, -1], (lbl[:, -3] > 0.5).to(y.dtype))
-    loss = loss + loss2
-    return loss
+    loss = criterion(y[:, -3:-1], veci) / 2.
+
+    # Foreground mask
+    fg = (lbl[:, -3] > 0.5).to(y.dtype)
+    
+    if tn_mask is not None:
+        # Masked BCE loss: only compute on sampled TN pixels
+        tn_values = torch.stack([y[i, -1, y_, x_] for i, y_, x_ in tn_mask])  # shape: [N]
+        gt_values = torch.zeros_like(tn_values)
+        loss2 = criterion2(tn_values, gt_values)
+    else:
+        loss2 = criterion2(y[:, -1], fg)
+
+    return loss + loss2
+
+
 
 def _reshape_norm(data, channel_axis=None, normalize_params={"normalize": False}):
     """
@@ -306,7 +326,7 @@ def _process_train_test(train_data=None, train_labels=None, train_files=None,
             test_probs, diam_test, normed)
 
 
-def train_seg(net, train_data=None, train_labels=None, train_files=None,
+def train_seg(net, train_data=None, train_labels=None, tn_coords=None, train_files=None,
               train_labels_files=None, train_probs=None, test_data=None,
               test_labels=None, test_files=None, test_labels_files=None,
               test_probs=None, channel_axis=None,
@@ -460,7 +480,18 @@ def train_seg(net, train_data=None, train_labels=None, train_files=None,
                 lbl = lbl.to(net.dtype)
 
             y = net(X)[0]
-            loss = _loss_fn_seg(lbl, y, device)
+
+            # Create mask only for current batch
+            # batch_tn_mask = [(i - k, y, x) for (i, y, x) in tn_coords if i in inds]
+            
+            # Map from global index (image idx) to local index (within this batch)
+            global_to_local = {global_idx: local_idx for local_idx, global_idx in enumerate(inds)}
+            batch_tn_mask = [
+                (global_to_local[i], y_, x_) for (i, y_, x_) in tn_coords if i in global_to_local
+            ]
+
+
+            loss = _loss_fn_seg(lbl, y, device, tn_mask=batch_tn_mask)
             if y.shape[1] > 3:
                 loss3 = _loss_fn_class(lbl, y, class_weights=class_weights)
                 loss += loss3
@@ -508,7 +539,7 @@ def train_seg(net, train_data=None, train_labels=None, train_files=None,
                             lbl = lbl.to(net.dtype)
                         
                         y = net(X)[0]
-                        loss = _loss_fn_seg(lbl, y, device)
+                        loss = _loss_fn_seg(lbl, y, device, tn_mask=batch_tn_mask)
                         if y.shape[1] > 3:
                             loss3 = _loss_fn_class(lbl, y, class_weights=class_weights)
                             loss += loss3            

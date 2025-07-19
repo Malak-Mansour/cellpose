@@ -116,22 +116,26 @@ image_dir = Path("../organized_masks_data_7_7_2025/Jurkat/Dynamic/5. Jurkat_ON_O
 image_files = sorted([f for f in image_dir.glob("t*.tif")])
 print(f"✅ Found {len(image_files)} images")
 
-# Load up to 6 images for visualization
-image_files = image_files
 
 # Load images
 imgs = []
 image_names = []
 for f in image_files:
-    # img = imread(f)
 
-    # Normalize to 0-1 if image is 16-bit
-    img = imread(f).astype(np.float32)
 
+    img = imread(f)
     print(f"Image {f.name} shape: {img.shape}, dtype: {img.dtype}, {img.min()} - {img.max()}")
-    if img.max() > 255:
-        img = np.clip(img, 0, 65535)  # ensure range
-        img = (img / 65535.0) * 255.0
+
+    # Convert to float32 but DO NOT normalize
+    img = img.astype(np.float32)
+
+    # # Normalize to 0-1 if image is 16-bit
+    # img = imread(f).astype(np.float32)
+
+    # print(f"Image {f.name} shape: {img.shape}, dtype: {img.dtype}, {img.min()} - {img.max()}")
+    # if img.max() > 255:
+    #     img = np.clip(img, 0, 65535)  # ensure range
+    #     img = (img / 65535.0) * 255.0
 
 
     if img.ndim == 2:
