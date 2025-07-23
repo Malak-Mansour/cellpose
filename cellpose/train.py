@@ -55,18 +55,20 @@ def _loss_fn_seg(lbl, y, device, tn_mask=None):
 
     # Loss on flows
     veci = 5. * lbl[:, -2:]
-    loss = criterion(y[:, -3:-1], veci) / 2.
+    # Force float32 for MSE loss
+    loss = criterion(y[:, -3:-1].float(), veci.float()) / 2.
 
     # Foreground mask
     fg = (lbl[:, -3] > 0.5).to(y.dtype)
     
-    if tn_mask is not None:
+    if tn_mask is not None and len(tn_mask) > 0:
         # Masked BCE loss: only compute on sampled TN pixels
         tn_values = torch.stack([y[i, -1, y_, x_] for i, y_, x_ in tn_mask])  # shape: [N]
         gt_values = torch.zeros_like(tn_values)
         loss2 = criterion2(tn_values, gt_values)
     else:
-        loss2 = criterion2(y[:, -1], fg)
+        # Fall back to full mask loss if no TN samples
+        loss2 = criterion2(y[:, -1].float(), fg.float())
 
     return loss + loss2
 
@@ -326,7 +328,7 @@ def _process_train_test(train_data=None, train_labels=None, train_files=None,
             test_probs, diam_test, normed)
 
 
-def train_seg(net, train_data=None, train_labels=None, tn_coords=None, train_files=None,
+def train_seg(net, train_data=None, train_labels=None, tn_coords=None, test_tn_coords=None, train_files=None,
               train_labels_files=None, train_probs=None, test_data=None,
               test_labels=None, test_files=None, test_labels_files=None,
               test_probs=None, channel_axis=None,
@@ -447,6 +449,9 @@ def train_seg(net, train_data=None, train_labels=None, tn_coords=None, train_fil
     lavg, nsum = 0, 0
     train_losses, test_losses = np.zeros(n_epochs), np.zeros(n_epochs)
     for iepoch in range(n_epochs):
+        epoch_start = time.time()
+        print(f"\n🔁 [Epoch {iepoch+1}/{n_epochs}] Starting...")
+
         np.random.seed(iepoch)
         if nimg != nimg_per_epoch:
             # choose random images for epoch with probability train_probs
@@ -506,6 +511,8 @@ def train_seg(net, train_data=None, train_labels=None, tn_coords=None, train_fil
             nsum += len(imgi)
             # per epoch training loss
             train_losses[iepoch] += train_loss
+            # print(f"    🔹 Batch {k}-{kend} | Loss: {train_loss:.4f}")
+        print(f"✅ Finished Epoch {iepoch+1} | Avg Train Loss: {train_losses[iepoch]/nimg_per_epoch:.4f}")
         train_losses[iepoch] /= nimg_per_epoch
 
         if iepoch == 5 or iepoch % 10 == 0:
@@ -539,7 +546,15 @@ def train_seg(net, train_data=None, train_labels=None, tn_coords=None, train_fil
                             lbl = lbl.to(net.dtype)
                         
                         y = net(X)[0]
-                        loss = _loss_fn_seg(lbl, y, device, tn_mask=batch_tn_mask)
+
+                        # Map from global index to local batch index for test set
+                        global_to_local_test = {global_idx: local_idx for local_idx, global_idx in enumerate(inds)}
+                        test_batch_tn_mask = [
+                            (global_to_local_test[i], y_, x_) for (i, y_, x_) in test_tn_coords if i in global_to_local_test
+                        ] if test_tn_coords is not None else None
+
+                        loss = _loss_fn_seg(lbl, y, device, tn_mask=test_batch_tn_mask)
+                        
                         if y.shape[1] > 3:
                             loss3 = _loss_fn_class(lbl, y, class_weights=class_weights)
                             loss += loss3            
@@ -548,6 +563,7 @@ def train_seg(net, train_data=None, train_labels=None, tn_coords=None, train_fil
                         lavgt += test_loss
                 lavgt /= len(rperm)
                 test_losses[iepoch] = lavgt
+                print(f"📊 Eval @ Epoch {iepoch+1} | Test Loss: {lavgt:.4f}")
             lavg /= nsum
             train_logger.info(
                 f"{iepoch}, train_loss={lavg:.4f}, test_loss={lavgt:.4f}, LR={LR[iepoch]:.6f}, time {time.time()-t0:.2f}s"
@@ -564,4 +580,5 @@ def train_seg(net, train_data=None, train_labels=None, tn_coords=None, train_fil
     
     net.save_model(filename)
 
+    print(f"\n✅ Training complete. Total time: {(time.time() - t0)/60:.2f} min")
     return filename, train_losses, test_losses

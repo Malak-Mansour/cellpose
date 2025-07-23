@@ -132,3 +132,6 @@ dmypy.json
 predicted_masks/
 models/
 overlay_visualizations/
+loss_curves/
+debug_outputs/
+logs/

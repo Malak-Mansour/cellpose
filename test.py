@@ -107,13 +107,16 @@ from pathlib import Path
 from skimage.io import imread
 from cellpose import models, core, io, transforms, utils
 
+
 io.logger_setup()
 if not core.use_gpu():
     raise RuntimeError("❌ No GPU found. Enable GPU.")
 
 # Path to your images
-image_dir = Path("../organized_masks_data_7_7_2025/Jurkat/Dynamic/5. Jurkat_ON_OFF_10V_R2/10v_20s-40s_nd_090")
-image_files = sorted([f for f in image_dir.glob("t*.tif")])
+image_dir = Path("../organized_masks_data_7_7_2025/Jurkat/Dynamic/5. Jurkat_ON_OFF_10V_R2/10v_20s-40s_nd_090") #unseen
+# image_dir = Path("../organized_masks_data_7_7_2025/Jurkat/Dynamic/5. Jurkat_ON_OFF_10V_R1/10v_20s-40s_nd_089")
+image_files = sorted([f for f in image_dir.glob("t*.tif")])[:2]
+# image_files = sorted([f for f in image_dir.glob("t*.tif")])
 print(f"✅ Found {len(image_files)} images")
 
 
@@ -123,19 +126,19 @@ image_names = []
 for f in image_files:
 
 
-    img = imread(f)
-    print(f"Image {f.name} shape: {img.shape}, dtype: {img.dtype}, {img.min()} - {img.max()}")
-
-    # Convert to float32 but DO NOT normalize
-    img = img.astype(np.float32)
-
-    # # Normalize to 0-1 if image is 16-bit
-    # img = imread(f).astype(np.float32)
-
+    # img = imread(f)
     # print(f"Image {f.name} shape: {img.shape}, dtype: {img.dtype}, {img.min()} - {img.max()}")
-    # if img.max() > 255:
-    #     img = np.clip(img, 0, 65535)  # ensure range
-    #     img = (img / 65535.0) * 255.0
+
+    # # Convert to float32 but DO NOT normalize
+    # img = img.astype(np.float32)
+
+    # Normalize to 0-1 if image is 16-bit
+    img = imread(f).astype(np.float32)
+
+    print(f"Image {f.name} shape: {img.shape}, dtype: {img.dtype}, {img.min()} - {img.max()}")
+    if img.max() > 255:
+        img = np.clip(img, 0, 65535)  # ensure range
+        img = (img / 65535.0) * 255.0
 
 
     if img.ndim == 2:
@@ -150,7 +153,16 @@ print(f"🖼️ Input batch shape: {imgs.shape}")  # (N, C, H, W)
 
 # ------------------ Load Custom Model ------------------
 # Update this path with the actual path where your model was saved
-custom_model_path = "~/.cellpose/models/fine_model_batch_8"  
+# custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_batch_1"
+custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_new_1"  
+# custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_stage_1"  
+# custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_test_1"  
+# custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_test_eval_1"  
+# custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_test_eval_2_1"  
+# custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_test_eval_1_1"  
+
+
+
 
 # model = models.CellposeModel(gpu=True, model_type='cyto')
 model = models.CellposeModel(gpu=True, pretrained_model=Path(custom_model_path).expanduser())
@@ -158,15 +170,60 @@ model = models.CellposeModel(gpu=True, pretrained_model=Path(custom_model_path).
 # ------------------ Run Inference ------------------
 masks_pred_all, flows_all, styles_all = [], [], []
 
-for img in imgs:
+from skimage import io
+from skimage.color import label2rgb
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+# def overlay_debug(image_path, gt_mask_path, pred_mask_path, output_dir="debug_overlays"):
+#     image = io.imread(image_path)
+#     gt_mask = io.imread(gt_mask_path)
+#     pred_mask = io.imread(pred_mask_path)
+
+#     overlay_gt = label2rgb(gt_mask, image=image, bg_label=0)
+#     overlay_pred = label2rgb(pred_mask, image=image, bg_label=0)
+
+#     Path(output_dir).mkdir(parents=True, exist_ok=True)
+#     fname = Path(image_path).stem
+
+#     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+#     axes[0].imshow(image, cmap='gray')
+#     axes[0].set_title("Original Image")
+#     axes[1].imshow(overlay_gt)
+#     axes[1].set_title("Ground Truth Overlay")
+#     axes[2].imshow(overlay_pred)
+#     axes[2].set_title("Predicted Overlay")
+
+#     for ax in axes:
+#         ax.axis("off")
+#     plt.tight_layout()
+#     plt.savefig(f"{output_dir}/{fname}_overlay.png")
+#     plt.close()
+
+
+'''
+* ***flow_threshold*** is  the  maximum  allowed  error  of  the  flows  for  each  mask.   The  default  is 0.4.
+    *  **Increase** this threshold if cellpose is not returning as many masks as you’d expect (or turn off completely with 0.0)
+    *   **Decrease** this threshold if cellpose is returning too many ill-shaped masks.
+
+* ***cellprob_threshold*** determines proability that a detected object is a cell.   The  default  is 0.0.
+    *   **Decrease** this threshold if cellpose is not returning as many masks as you’d expect or if masks are too small
+    *   **Increase** this threshold if cellpose is returning too many masks esp from dull/dim areas.
+'''
+for i, img in enumerate(imgs):
     masks_pred, flows, styles = model.eval(
         img,
         niter=1000,
         do_3D=False,
-        channels=[0, 0],  # grayscale input
-        flow_threshold=0.9,         # default is 0.4
-        cellprob_threshold=0.9      # default is 0.0
+        channels=[0, 0],
+        # flow_threshold=1,  # 0.4 default. Adjusted for better flow detection
+        # cellprob_threshold=,  # 0.0 default. Allow all cells to be detected
     )
+    # io.imsave(f"pred_mask_{i}.tif", masks_pred.astype(np.uint16))
+    # io.imsave(f"orig_img_{i}.tif", img.astype(np.uint16))  # If needed
+    # Save overlay visualization
+    # overlay_debug(f"orig_img_{i}.tif", f"gt_mask_{i}.tif", f"pred_mask_{i}.tif")
+
     masks_pred_all.append(masks_pred)
     flows_all.append(flows)
     styles_all.append(styles)
@@ -189,14 +246,22 @@ print(f"✅ Saved {len(masks_pred_all)} predicted masks to: {output_dir.resolve(
 
 from cellpose.utils import outlines_list, masks_to_outlines
 
-viz_dir = Path("overlay_visualizations")
+# viz_dir = Path("overlay_visualizations/overlay_visualizations_test_eval_nd90_1")
+viz_dir = Path("overlay_visualizations/TRASH")
 viz_dir.mkdir(exist_ok=True)
 
 for i, (img, mask) in enumerate(zip(imgs, masks_pred_all)):
     img_vis = img[0]  # extract (H, W) from (1, H, W)
 
-    # Normalize for display
-    img_vis = np.clip(img_vis, 0, 255).astype(np.uint8)
+    # # Normalize for display
+    # img_vis = np.clip(img_vis, 0, 255).astype(np.uint8)
+
+    # Contrast stretch: brighten image for visibility
+    p2, p98 = np.percentile(img_vis, (2, 98))
+    img_vis = np.clip((img_vis - p2) / (p98 - p2 + 1e-5), 0, 1)
+    img_vis = (img_vis * 100).astype(np.uint8)
+
+
 
     # Get outlines
     outlines = masks_to_outlines(mask)
