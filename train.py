@@ -549,9 +549,14 @@ def sample_true_negatives_from_resized_mask(resized_mask, num_samples=30):
             tn_coords.append((yx[0], yx[1]))
     return tn_coords
 
+
+# works with only cells or background
+'''
 def load_image_mask_pairs(image_dir, mask_dir, target_shape=(256, 256), num_tns=30):
     image_files = sorted(image_dir.glob("t*.tif"))
-    mask_files = sorted(mask_dir.glob("masks*.tif"))
+    mask_files = sorted(mask_dir.glob("Masks*.tif"))
+    # image_files = sorted(image_dir.glob("img_*.tif"))
+    # mask_files = sorted(mask_dir.glob("mask_*.tif"))
 
     image_map = {extract_index(f): f for f in image_files}
     mask_map = {extract_index(f): f for f in mask_files}
@@ -562,8 +567,12 @@ def load_image_mask_pairs(image_dir, mask_dir, target_shape=(256, 256), num_tns=
     images, masks, tns_all = [], [], []
 
     for i in common_indices:
-        img = io.imread(image_map[i])
-        mask = bin_to_labels(io.imread(mask_map[i]))
+        try:
+            img = io.imread(image_map[i])
+            mask = bin_to_labels(io.imread(mask_map[i]))
+        except Exception as e:
+            print(f"❌ Skipping index {i} due to read error: {e}")
+            continue
 
         resized_mask = resize(mask.astype(np.uint8), target_shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint8)
         tn_coords = sample_true_negatives_from_resized_mask(resized_mask, num_tns)
@@ -572,67 +581,116 @@ def load_image_mask_pairs(image_dir, mask_dir, target_shape=(256, 256), num_tns=
         masks.append(mask)
         tns_all.append(tn_coords)
 
-        '''
-        # Debugging: Save resized mask and TN coordinates
-        print(tn_coords)
+        
+        # # Debugging: Save resized mask and TN coordinates
+        # print(tn_coords)
 
-        # Save GT overlay with TNs (for sanity check)
-        debug_dir = Path("debug_outputs") / "final_overlay"
-        debug_dir.mkdir(parents=True, exist_ok=True)
+        # # Save GT overlay with TNs (for sanity check)
+        # debug_dir = Path("debug_outputs") / "final_overlay"
+        # debug_dir.mkdir(parents=True, exist_ok=True)
 
-        if img.dtype == np.uint16 or img.max() > 1:
-            norm_img = ((img - img.min()) / (img.max() - img.min())).astype(np.float32)
-        else:
-            norm_img = img.astype(np.float32)
+        # if img.dtype == np.uint16 or img.max() > 1:
+        #     norm_img = ((img - img.min()) / (img.max() - img.min())).astype(np.float32)
+        # else:
+        #     norm_img = img.astype(np.float32)
 
-        norm_img_rgb = np.stack([norm_img]*3, axis=-1) if norm_img.ndim == 2 else norm_img
+        # norm_img_rgb = np.stack([norm_img]*3, axis=-1) if norm_img.ndim == 2 else norm_img
 
-        overlay_green = label2rgb(mask, image=norm_img_rgb, bg_label=0, alpha=0.4, colors=['lime'])
+        # overlay_green = label2rgb(mask, image=norm_img_rgb, bg_label=0, alpha=0.4, colors=['lime'])
 
-        overlay_uint8 = img_as_ubyte(np.clip(overlay_green, 0, 1))
+        # overlay_uint8 = img_as_ubyte(np.clip(overlay_green, 0, 1))
 
-        scale_y = mask.shape[0] / resized_mask.shape[0]
-        scale_x = mask.shape[1] / resized_mask.shape[1]
-        for y, x in tn_coords:
-            y_orig = int(y * scale_y)
-            x_orig = int(x * scale_x)
-            # if 0 <= y_orig < overlay_uint8.shape[0] and 0 <= x_orig < overlay_uint8.shape[1]:
-            #     overlay_uint8[y_orig, x_orig] = [255, 0, 0]  # Red TN marker
-            draw_square_on_image(overlay_uint8, y_orig, x_orig, size=7, color=(255, 0, 0))
+        # scale_y = mask.shape[0] / resized_mask.shape[0]
+        # scale_x = mask.shape[1] / resized_mask.shape[1]
+        # for y, x in tn_coords:
+        #     y_orig = int(y * scale_y)
+        #     x_orig = int(x * scale_x)
+        #     # if 0 <= y_orig < overlay_uint8.shape[0] and 0 <= x_orig < overlay_uint8.shape[1]:
+        #     #     overlay_uint8[y_orig, x_orig] = [255, 0, 0]  # Red TN marker
+        #     draw_square_on_image(overlay_uint8, y_orig, x_orig, size=7, color=(255, 0, 0))
 
-        imsave(debug_dir / f"overlay_img_mask_tn_{i}.png", overlay_uint8)
-        '''
+        # imsave(debug_dir / f"overlay_img_mask_tn_{i}.png", overlay_uint8)
+        
+
+    return images, masks, tns_all
+'''
+
+# to work with the dead/chaining cells that should be excluded
+def load_image_mask_pairs(image_dir, mask_dir, exclude_mask_dir=None, target_shape=(256, 256), num_tns=30):
+    image_files = sorted(image_dir.glob("t*.tif"))
+    mask_files = sorted(mask_dir.glob("Masks*.tif"))
+    exclude_files = sorted(exclude_mask_dir.glob("Masks*.tif")) if exclude_mask_dir else []
+
+    image_map = {extract_index(f): f for f in image_files}
+    mask_map = {extract_index(f): f for f in mask_files}
+    exclude_map = {extract_index(f): f for f in exclude_files} if exclude_mask_dir else {}
+
+    common_indices = sorted(set(image_map.keys()) & set(mask_map.keys()))
+
+    print(f"📂 {image_dir.name} → {len(common_indices)} matched pairs")
+
+    images, masks, tns_all = [], [], []
+
+    for i in common_indices:
+        try:
+            img = io.imread(image_map[i])
+            main_mask = bin_to_labels(io.imread(mask_map[i]))
+
+            if i in exclude_map:
+                exclude_mask = bin_to_labels(io.imread(exclude_map[i]))
+                # Exclude dead cells/chaining by zeroing out overlapping labels
+                main_mask[exclude_mask > 0] = 0
+            else:
+                exclude_mask = None
+        except Exception as e:
+            print(f"❌ Skipping index {i} due to read error: {e}")
+            continue
+
+        resized_mask = resize(main_mask.astype(np.uint8), target_shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint8)
+        tn_coords = sample_true_negatives_from_resized_mask(resized_mask, num_tns)
+
+        images.append(img)
+        masks.append(main_mask)
+        tns_all.append(tn_coords)
 
     return images, masks, tns_all
 
+
 # ------------------ Paths ------------------ #
+# folder_pairs = [
+#     ("../organized_masks_data_7_7_2025/Jurkat/Dynamic/5. Jurkat_ON_OFF_10V_R1/10v_20s-40s_nd_089",
+#      "../organized_masks_data_7_7_2025/Jurkat/Dynamic/5. Jurkat_ON_OFF_10V_R1/Modified_masks"),
 
+#     ("../organized_masks_data_7_7_2025/Jurkat/Dynamic/5. Jurkat_ON_OFF_10V_R3/10v_20s-40s_nd_091",
+#      "../organized_masks_data_7_7_2025/Jurkat/Dynamic/5. Jurkat_ON_OFF_10V_R3/Modified_masks"),
 
-folder_pairs = [
-    ("../organized_masks_data_7_7_2025/Jurkat/Dynamic/5. Jurkat_ON_OFF_10V_R1/10v_20s-40s_nd_089",
-     "../organized_masks_data_7_7_2025/Jurkat/Dynamic/5. Jurkat_ON_OFF_10V_R1/Modified_masks"),
+#     ("../organized_masks_data_7_7_2025/SKBR3/Dynamic/6. SKBR3_ON_OFF_10V_R1/L6",
+#      "../organized_masks_data_7_7_2025/SKBR3/Dynamic/6. SKBR3_ON_OFF_10V_R1/Modified_masks"),
 
-    ("../organized_masks_data_7_7_2025/Jurkat/Dynamic/5. Jurkat_ON_OFF_10V_R3/10v_20s-40s_nd_091",
-     "../organized_masks_data_7_7_2025/Jurkat/Dynamic/5. Jurkat_ON_OFF_10V_R3/Modified_masks"),
-
-    ("../organized_masks_data_7_7_2025/SKBR3/Dynamic/6. SKBR3_ON_OFF_10V_R1/L6",
-     "../organized_masks_data_7_7_2025/SKBR3/Dynamic/6. SKBR3_ON_OFF_10V_R1/Modified_masks"),
-
-    ("../organized_masks_data_7_7_2025/SKBR3/Dynamic/6. SKBR3_ON_OFF_10V_R2/L4",
-     "../organized_masks_data_7_7_2025/SKBR3/Dynamic/6. SKBR3_ON_OFF_10V_R2/Modified_masks"),
+#     ("../organized_masks_data_7_7_2025/SKBR3/Dynamic/6. SKBR3_ON_OFF_10V_R2/L4",
+#      "../organized_masks_data_7_7_2025/SKBR3/Dynamic/6. SKBR3_ON_OFF_10V_R2/Modified_masks"),
     
-    ("../organized_masks_data_7_7_2025/SKBR3/Dynamic/6. SKBR3_ON_OFF_10V_R3/L3_001",
-     "../organized_masks_data_7_7_2025/SKBR3/Dynamic/6. SKBR3_ON_OFF_10V_R3/Modified_masks"),
+#     ("../organized_masks_data_7_7_2025/SKBR3/Dynamic/6. SKBR3_ON_OFF_10V_R3/L3_001",
+#      "../organized_masks_data_7_7_2025/SKBR3/Dynamic/6. SKBR3_ON_OFF_10V_R3/Modified_masks"),
     
-    ("../organized_masks_data_7_7_2025/SKBR3/Static/3. SKBR3_Static_R1/L3",
-     "../organized_masks_data_7_7_2025/SKBR3/Static/3. SKBR3_Static_R1/Modified_masks"),
+#     ("../organized_masks_data_7_7_2025/SKBR3/Static/3. SKBR3_Static_R1/L3",
+#      "../organized_masks_data_7_7_2025/SKBR3/Static/3. SKBR3_Static_R1/Modified_masks"),
     
-    ("../organized_masks_data_7_7_2025/SKBR3/Static/3. SKBR3_Static_R2/L5",
-     "../organized_masks_data_7_7_2025/SKBR3/Static/3. SKBR3_Static_R2/Modified_masks"),
+#     ("../organized_masks_data_7_7_2025/SKBR3/Static/3. SKBR3_Static_R2/L5",
+#      "../organized_masks_data_7_7_2025/SKBR3/Static/3. SKBR3_Static_R2/Modified_masks"),
     
-    ("../organized_masks_data_7_7_2025/SKBR3/Static/3. SKBR3_Static_R3/L2",
-     "../organized_masks_data_7_7_2025/SKBR3/Static/3. SKBR3_Static_R3/Modified_masks"),
-]
+#     ("../organized_masks_data_7_7_2025/SKBR3/Static/3. SKBR3_Static_R3/L2",
+#      "../organized_masks_data_7_7_2025/SKBR3/Static/3. SKBR3_Static_R3/Modified_masks"),
+# ]
+
+# folder_pairs = [
+#     ("../filtered_DEP_data/2. Jurkat_Static_R3/Images/nd_077_right 3",
+#      "../filtered_DEP_data/2. Jurkat_Static_R3/Modified Masks")]
+
+folder_pairs = [("../flattened_dataset/all_images",
+     "../flattened_dataset/all_masks",
+    "../flattened_dataset/exclude_masks")]
+
 
 batch_size = 1
 batches = [folder_pairs[i:i+batch_size] for i in range(0, len(folder_pairs), batch_size)]
@@ -644,8 +702,14 @@ for stage_idx, folder_batch in enumerate(batches):
 
     all_images, all_masks, all_tns = [], [], []
 
-    for img_path, mask_path in folder_batch:
-        images, masks, tn_lists = load_image_mask_pairs(Path(img_path), Path(mask_path))
+
+    for img_path, mask_path, exclude_path in folder_batch:
+        images, masks, tn_lists = load_image_mask_pairs(Path(img_path), Path(mask_path), Path(exclude_path))
+
+    # for img_path, mask_path in folder_batch:
+    #     images, masks, tn_lists = load_image_mask_pairs(Path(img_path), Path(mask_path))
+
+
         base_idx = len(all_images)
         all_images.extend(images)
         all_masks.extend(masks)
@@ -660,7 +724,7 @@ for stage_idx, folder_batch in enumerate(batches):
     else:
         model = models.CellposeModel(gpu=True)
 
-    model_name = f"fine_model_test_eval_1_{stage_idx+1}"
+    model_name = f"fine_model_flattened_{stage_idx+1}"
     print(f"🚀 Training model: {model_name}")
 
     # model_path, train_losses, test_losses = train.train_seg(

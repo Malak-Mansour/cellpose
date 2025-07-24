@@ -154,12 +154,12 @@ print(f"🖼️ Input batch shape: {imgs.shape}")  # (N, C, H, W)
 # ------------------ Load Custom Model ------------------
 # Update this path with the actual path where your model was saved
 # custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_batch_1"
-custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_new_1"  
+# custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_new_1"  
 # custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_stage_1"  
 # custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_test_1"  
 # custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_test_eval_1"  
 # custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_test_eval_2_1"  
-# custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_test_eval_1_1"  
+custom_model_path = "/l/users/malak.mansour/DEP/cellpose/models/fine_model_test_eval_1_1"  
 
 
 
@@ -246,8 +246,7 @@ print(f"✅ Saved {len(masks_pred_all)} predicted masks to: {output_dir.resolve(
 
 from cellpose.utils import outlines_list, masks_to_outlines
 
-# viz_dir = Path("overlay_visualizations/overlay_visualizations_test_eval_nd90_1")
-viz_dir = Path("overlay_visualizations/TRASH")
+viz_dir = Path("overlay_visualizations/overlay_visualizations_test_eval_nd90_1")
 viz_dir.mkdir(exist_ok=True)
 
 for i, (img, mask) in enumerate(zip(imgs, masks_pred_all)):
