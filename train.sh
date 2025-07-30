@@ -9,7 +9,6 @@
 #SBATCH --partition=cscc-gpu-p
 #SBATCH --qos=cscc-gpu-qos
 #SBATCH --time=12:00:00
-#SBATCH --exclude=gpu-49,gpu-05
 #SBATCH --no-requeue
 
 # Activate your conda environment
