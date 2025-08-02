@@ -843,180 +843,6 @@
 
 
 
-#SHUFFLED UNIFIED FOLDER
-from cellpose import io, models, core, train
-from skimage.measure import label
-from pathlib import Path
-import numpy as np
-import re
-import matplotlib.pyplot as plt
-from skimage.transform import resize
-from sklearn.model_selection import train_test_split
-
-import os
-from skimage.color import label2rgb
-from skimage.io import imsave
-from skimage.util import img_as_ubyte
-from skimage.segmentation import find_boundaries
-import gc
-import torch
-import psutil
-
-
-# ------------------ Helper Functions ------------------ #
-def draw_square_on_image(img, y, x, size=7, color=(255, 0, 0)):
-    half = size // 2
-    y1 = max(0, y - half)
-    y2 = min(img.shape[0], y + half + 1)
-    x1 = max(0, x - half)
-    x2 = min(img.shape[1], x + half + 1)
-    img[y1:y2, x1:x2] = color
-
-def extract_index(filename):
-    match = re.search(r"(\d+)", filename.stem)
-    return int(match.group(1)) if match else None
-
-def bin_to_labels(mask):
-    threshold = np.max(mask) * 0.5
-    binary = mask > threshold
-    labeled = label(binary.astype(np.uint8), connectivity=1)
-    return labeled
-
-def sample_true_negatives_from_resized_mask(resized_mask, num_samples=30):
-    tn_coords = []
-    bg_coords = np.argwhere(resized_mask == 0)
-    if len(bg_coords) > 0:
-        sampled = bg_coords[np.random.choice(len(bg_coords), min(num_samples, len(bg_coords)), replace=False)]
-        for yx in sampled:
-            tn_coords.append((yx[0], yx[1]))
-    return tn_coords
-
-
-
-# to work with the dead/chaining cells that should be excluded
-def load_image_mask_pairs(image_dir, mask_dir, exclude_mask_dir=None, target_shape=(256, 256), num_tns=30):
-    # image_files = sorted(image_dir.glob("img*.tif"))
-    # mask_files = sorted(mask_dir.glob("mask*.tif"))    
-
-    image_files = sorted(image_dir.glob("t*.tif"))
-    mask_files = sorted(mask_dir.glob("masks*.tif"))
-    exclude_files = sorted(exclude_mask_dir.glob("exclude_*.tif")) if exclude_mask_dir else []
-
-
-    image_map = {extract_index(f): f for f in image_files}
-    mask_map = {extract_index(f): f for f in mask_files}
-    exclude_map = {extract_index(f): f for f in exclude_files} if exclude_mask_dir else {}
-
-    common_indices = sorted(set(image_map.keys()) & set(mask_map.keys()))
-
-    print(f"📂 {image_dir.name} → {len(common_indices)} matched pairs")
-
-    images, masks, tns_all = [], [], []
-
-    for i in common_indices:
-        try:
-            img = io.imread(image_map[i])
-            main_mask = bin_to_labels(io.imread(mask_map[i]))
-
-            if i in exclude_map:
-                exclude_mask = bin_to_labels(io.imread(exclude_map[i]))
-                # Exclude dead cells/chaining by zeroing out overlapping labels
-                main_mask[exclude_mask > 0] = 0
-            else:
-                exclude_mask = None
-        except Exception as e:
-            print(f"❌ Skipping index {i} due to read error: {e}")
-            continue
-
-        resized_mask = resize(main_mask.astype(np.uint8), target_shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint8)
-        tn_coords = sample_true_negatives_from_resized_mask(resized_mask, num_tns)
-
-        images.append(img)
-        masks.append(main_mask)
-        tns_all.append(tn_coords)
-
-    return images, masks, tns_all
-
-
-# folder_pairs = [("../flattened_dataset/all_images",
-#      "../flattened_dataset/all_masks")]
-
-folder_pairs = [("../filtered_DEP_data/3. SKBR3_Static_R1/Images/L3",
-                 "../filtered_DEP_data/3. SKBR3_Static_R1/Modified_Masks",
-                 "../filtered_DEP_data/3. SKBR3_Static_R1/Chaining")]
-
-# Combine all image-mask pairs from all folder pairs
-combined_images, combined_masks, combined_tns = [], [], []
-
-# for img_path, mask_path in folder_pairs:
-#     images, masks, tn_lists = load_image_mask_pairs(Path(img_path), Path(mask_path))
-
-for img_path, mask_path, exclude_path in folder_pairs:
-    images, masks, tn_lists = load_image_mask_pairs(Path(img_path), Path(mask_path), Path(exclude_path))
-
-    base_idx = len(combined_images)
-    combined_images.extend(images)
-    combined_masks.extend(masks)
-    for i, tn_coords in enumerate(tn_lists):
-        for y, x in tn_coords:
-            combined_tns.append((base_idx + i, y, x))
-
-print(f"\n📊 Total loaded: {len(combined_images)} images")
-
-# Split all data into train and val
-X_train, X_val, y_train, y_val = train_test_split(combined_images, combined_masks, test_size=0.2, random_state=42)
-
-tn_train = [(i, y, x) for (i, y, x) in combined_tns if i < len(X_train)]
-tn_val = [(i - len(X_train), y, x) for (i, y, x) in combined_tns if i >= len(X_train)]
-
-# Initialize a new model (no pretraining)
-model = models.CellposeModel(gpu=True)
-
-model_name = "fine_model_chain_full"
-print(f"\n🚀 Training model: {model_name} on full dataset with {len(combined_images)} images")
-
-# Train once on the entire dataset
-model_path, train_losses, test_losses = train.train_seg(
-    model.net,
-    train_data=X_train,
-    train_labels=y_train,
-    test_data=X_val,
-    test_labels=y_val,
-    tn_coords=tn_train,
-    test_tn_coords=tn_val,
-    batch_size=1,
-    n_epochs=70,
-    learning_rate=1e-5,
-    weight_decay=0.1,
-    nimg_per_epoch=min(30, len(X_train)),
-    model_name=model_name
-)
-
-# Plot and save loss curve
-plt.figure(figsize=(10, 5))
-plt.plot(train_losses, label="Train Loss")
-plt.plot(test_losses, label="Val Loss")
-plt.xlabel("Epoch")
-plt.ylabel("Loss")
-plt.title(f"Loss Curve for {model_name}")
-plt.legend()
-plt.grid(True)
-
-loss_dir = Path("loss_curves")
-loss_dir.mkdir(parents=True, exist_ok=True)
-plt.savefig(loss_dir / f"loss_curve_{model_name}.png")
-plt.close('all')
-
-torch.cuda.empty_cache()
-gc.collect()
-
-process = psutil.Process(os.getpid())
-print(f"🧠 RAM used after cleanup: {process.memory_info().rss / 1024**3:.2f} GB")
-print(f"🖥️ GPU used after cleanup: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
-
-print(f"📈 Saved loss curve as: loss_curve_{model_name}.png")
-print(f"💾 Model saved to: {model_path}")
-
 #WITH BATCHES: REMOVED BECAUSE RETRAINING DOESNT SEEM TO WORK, THE 2ND MODEL ONWARDS IS HORRIBLE
 # batch_size = 5
 # total_batches = (len(combined_images) + batch_size - 1) // batch_size
@@ -1088,3 +914,331 @@ print(f"💾 Model saved to: {model_path}")
 #     print(f"💾 Model saved to: {model_path}")
 
     
+
+
+
+#TRAIN ON ALL AT ONCE
+# # Initialize a new model (no pretraining)
+# model = models.CellposeModel(gpu=True)
+
+# model_name = "fine_model_full" #NO CHAINING
+# # model_name = "fine_model_chain_full" #CHAINING
+# print(f"\n🚀 Training model: {model_name} on full dataset with {len(combined_images)} images")
+
+# # Train once on the entire dataset
+# model_path, train_losses, test_losses = train.train_seg(
+#     model.net,
+#     train_data=X_train,
+#     train_labels=y_train,
+#     test_data=X_val,
+#     test_labels=y_val,
+#     tn_coords=tn_train,
+#     test_tn_coords=tn_val,
+#     batch_size=1,
+#     n_epochs=70,
+#     learning_rate=1e-5,
+#     weight_decay=0.1,
+#     nimg_per_epoch=min(30, len(X_train)),
+#     model_name=model_name
+# )
+
+# # Plot and save loss curve
+# plt.figure(figsize=(10, 5))
+# plt.plot(train_losses, label="Train Loss")
+# plt.plot(test_losses, label="Val Loss")
+# plt.xlabel("Epoch")
+# plt.ylabel("Loss")
+# plt.title(f"Loss Curve for {model_name}")
+# plt.legend()
+# plt.grid(True)
+
+# loss_dir = Path("loss_curves")
+# loss_dir.mkdir(parents=True, exist_ok=True)
+# plt.savefig(loss_dir / f"loss_curve_{model_name}.png")
+# plt.close('all')
+
+# torch.cuda.empty_cache()
+# gc.collect()
+
+# process = psutil.Process(os.getpid())
+# print(f"🧠 RAM used after cleanup: {process.memory_info().rss / 1024**3:.2f} GB")
+# print(f"🖥️ GPU used after cleanup: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+
+# print(f"📈 Saved loss curve as: loss_curve_{model_name}.png")
+# print(f"💾 Model saved to: {model_path}")
+
+
+
+
+
+#Train in chunks without reinitializing model each time
+# chunk_size = 70  # Adjust based on your memory capacity
+# num_chunks = (len(X_train) + chunk_size - 1) // chunk_size
+
+# model = models.CellposeModel(gpu=True)
+# model_name = "fine_model_full_incremental"
+
+# all_train_losses, all_val_losses = [], []
+
+# for chunk_id in range(num_chunks):
+#     start = chunk_id * chunk_size
+#     end = min(start + chunk_size, len(X_train))
+    
+#     X_chunk = X_train[start:end]
+#     y_chunk = y_train[start:end]
+
+#     tn_chunk = [(i - start, y, x) for (i, y, x) in tn_train if start <= i < end]
+
+#     print(f"\n🧪 Training chunk {chunk_id+1}/{num_chunks} → {len(X_chunk)} samples")
+
+#     model_path, train_losses, val_losses = train.train_seg(
+#         model.net,
+#         train_data=X_chunk,
+#         train_labels=y_chunk,
+#         test_data=X_val,
+#         test_labels=y_val,
+#         tn_coords=tn_chunk,
+#         test_tn_coords=tn_val,
+#         batch_size=1,
+#         n_epochs=70,
+#         learning_rate=1e-5,
+#         weight_decay=0.1,
+#         nimg_per_epoch=min(30, len(X_chunk)),
+#         model_name=model_name
+#     )
+
+#     all_train_losses.extend(train_losses)
+#     all_val_losses.extend(val_losses)
+
+#     torch.cuda.empty_cache()
+#     gc.collect()
+
+# # Plot final loss curve
+# plt.figure(figsize=(10, 5))
+# plt.plot(all_train_losses, label="Train Loss")
+# plt.plot(all_val_losses, label="Val Loss")
+# plt.xlabel("Epochs (accumulated)")
+# plt.ylabel("Loss")
+# plt.title(f"Loss Curve for {model_name}")
+# plt.legend()
+# plt.grid(True)
+
+# loss_dir = Path("loss_curves")
+# loss_dir.mkdir(parents=True, exist_ok=True)
+# plt.savefig(loss_dir / f"loss_curve_{model_name}.png")
+# plt.close('all')
+
+# torch.cuda.empty_cache()
+# gc.collect()
+
+# process = psutil.Process(os.getpid())
+# print(f"🧠 RAM used after cleanup: {process.memory_info().rss / 1024**3:.2f} GB")
+# print(f"🖥️ GPU used after cleanup: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+# print(f"📈 Saved loss curve as: loss_curve_{model_name}.png")
+# print(f"💾 Final model saved to: {model_path}")
+
+
+
+#SHUFFLED UNIFIED FOLDER
+from cellpose import io, models, core, train
+from skimage.measure import label
+from pathlib import Path
+import numpy as np
+import re
+import matplotlib.pyplot as plt
+from skimage.transform import resize
+from sklearn.model_selection import train_test_split
+
+import os
+from skimage.color import label2rgb
+from skimage.io import imsave
+from skimage.util import img_as_ubyte
+from skimage.segmentation import find_boundaries
+import gc
+import torch
+import psutil
+
+
+# ------------------ Helper Functions ------------------ #
+def draw_square_on_image(img, y, x, size=7, color=(255, 0, 0)):
+    half = size // 2
+    y1 = max(0, y - half)
+    y2 = min(img.shape[0], y + half + 1)
+    x1 = max(0, x - half)
+    x2 = min(img.shape[1], x + half + 1)
+    img[y1:y2, x1:x2] = color
+
+def extract_index(filename):
+    match = re.search(r"(\d+)", filename.stem)
+    return int(match.group(1)) if match else None
+
+def bin_to_labels(mask):
+    threshold = np.max(mask) * 0.5
+    binary = mask > threshold
+    labeled = label(binary.astype(np.uint8), connectivity=1)
+    return labeled
+
+def sample_true_negatives_from_resized_mask(resized_mask, num_samples=30):
+    tn_coords = []
+    bg_coords = np.argwhere(resized_mask == 0)
+    if len(bg_coords) > 0:
+        sampled = bg_coords[np.random.choice(len(bg_coords), min(num_samples, len(bg_coords)), replace=False)]
+        for yx in sampled:
+            tn_coords.append((yx[0], yx[1]))
+    return tn_coords
+
+
+
+# to work with the dead/chaining cells that should be excluded
+def load_image_mask_pairs(image_dir, mask_dir, exclude_mask_dir=None, target_shape=(256, 256), num_tns=30):
+    #NO CHAINING
+    image_files = sorted(image_dir.glob("img*.tif"))
+    mask_files = sorted(mask_dir.glob("mask*.tif"))    
+
+    #CHAINING
+    # image_files = sorted(image_dir.glob("t*.tif"))
+    # mask_files = sorted(mask_dir.glob("masks*.tif"))
+
+
+    exclude_files = sorted(exclude_mask_dir.glob("exclude_*.tif")) if exclude_mask_dir else []
+
+
+    image_map = {extract_index(f): f for f in image_files}
+    mask_map = {extract_index(f): f for f in mask_files}
+    exclude_map = {extract_index(f): f for f in exclude_files} if exclude_mask_dir else {}
+
+    # common_indices = sorted(set(image_map.keys()) & set(mask_map.keys()))[:100]
+    common_indices = sorted(set(image_map.keys()) & set(mask_map.keys()))
+
+    print(f"📂 {image_dir.name} → {len(common_indices)} matched pairs")
+
+    images, masks, tns_all = [], [], []
+
+    for i in common_indices:
+        try:
+            img = io.imread(image_map[i])
+            main_mask = bin_to_labels(io.imread(mask_map[i]))
+            # print(f"🔍 Processing index {i} → Image shape: {img.shape}, Mask shape: {main_mask.shape}")
+
+            if i in exclude_map:
+                exclude_mask = bin_to_labels(io.imread(exclude_map[i]))
+                # Exclude dead cells/chaining by zeroing out overlapping labels
+                main_mask[exclude_mask > 0] = 0
+            else:
+                exclude_mask = None
+        except Exception as e:
+            print(f"❌ Skipping index {i} due to read error: {e}")
+            continue
+
+        resized_mask = resize(main_mask.astype(np.uint8), target_shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint8)
+        tn_coords = sample_true_negatives_from_resized_mask(resized_mask, num_tns)
+
+        images.append(img)
+        masks.append(main_mask)
+        tns_all.append(tn_coords)
+
+    return images, masks, tns_all
+
+#NO CHAINING
+folder_pairs = [("../flattened_dataset/all_images",
+     "../flattened_dataset/all_masks")]
+
+#CHAINING
+# folder_pairs = [("../filtered_DEP_data/3. SKBR3_Static_R1/Images/L3",
+#                  "../filtered_DEP_data/3. SKBR3_Static_R1/Modified_Masks",
+#                  "../filtered_DEP_data/3. SKBR3_Static_R1/Chaining")]
+
+
+# Combine all image-mask pairs from all folder pairs
+combined_images, combined_masks, combined_tns = [], [], []
+
+print("🔍 [0] Initializing model...")
+model = models.CellposeModel(gpu=True)
+model_name = "fine_model_all_once"
+
+print("🔍 [1] Starting data loading...")
+
+#NO CHAINING
+for img_path, mask_path in folder_pairs:
+    print(f"🔍 [1.1] Loading from: {img_path}")
+    images, masks, tn_lists = load_image_mask_pairs(Path(img_path), Path(mask_path))
+
+#CHAINING
+# for img_path, mask_path, exclude_path in folder_pairs:
+#     images, masks, tn_lists = load_image_mask_pairs(Path(img_path), Path(mask_path), Path(exclude_path))
+
+    base_idx = len(combined_images)
+    combined_images.extend(images)
+    combined_masks.extend(masks)
+    for i, tn_coords in enumerate(tn_lists):
+        for y, x in tn_coords:
+            combined_tns.append((base_idx + i, y, x))
+
+print(f"\n📊 Total loaded: {len(combined_images)} images")
+print("🔍 [2] Splitting into train/val...")
+
+# Split all data into train and val
+X_train, X_val, y_train, y_val = train_test_split(combined_images, combined_masks, test_size=0.2, random_state=42)
+
+tn_train = [(i, y, x) for (i, y, x) in combined_tns if i < len(X_train)]
+tn_val = [(i - len(X_train), y, x) for (i, y, x) in combined_tns if i >= len(X_train)]
+
+print(f"🔍 [3] Training set: {len(X_train)} | Val set: {len(X_val)}")
+
+
+
+print("🔍 [3.5] Cleaning up before model init...")
+torch.cuda.empty_cache()
+gc.collect()
+
+process = psutil.Process(os.getpid())
+print(f"🧠 RAM: {process.memory_info().rss / 1024**3:.2f} GB | 🖥️ GPU: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+
+
+
+
+print(f"\n🚀 Training model on full dataset with {len(X_train)} images")
+print(f"[🔍] RAM before train: {psutil.virtual_memory().used / 1e9:.2f} GB")
+model_path, train_losses, test_losses = train.train_seg(
+    model.net,
+    train_data=X_train,
+    train_labels=y_train,
+    test_data=X_val,
+    test_labels=y_val,
+    tn_coords=tn_train,
+    test_tn_coords=tn_val,
+    batch_size=1,
+    n_epochs=70,                      # increase epochs if nimg_per_epoch is small
+    learning_rate=1e-5,
+    weight_decay=0.1,
+    nimg_per_epoch=30,                # limits memory usage by simulating small batches
+    model_name=model_name
+)
+print("✅ [6] Training complete — saving loss curves...")
+
+
+# Plot and save loss curve
+plt.figure(figsize=(10, 5))
+plt.plot(train_losses, label="Train Loss")
+plt.plot(test_losses, label="Val Loss")
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.title(f"Loss Curve for {model_name}")
+plt.legend()
+plt.grid(True)
+
+loss_dir = Path("loss_curves")
+loss_dir.mkdir(parents=True, exist_ok=True)
+plt.savefig(loss_dir / f"loss_curve_{model_name}.png")
+plt.close('all')
+
+torch.cuda.empty_cache()
+gc.collect()
+
+process = psutil.Process(os.getpid())
+print(f"🧠 RAM used after cleanup: {process.memory_info().rss / 1024**3:.2f} GB")
+print(f"🖥️ GPU used after cleanup: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+
+print(f"📈 Saved loss curve as: loss_curve_{model_name}.png")
+print(f"💾 Model saved to: {model_path}")
+
