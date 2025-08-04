@@ -1119,10 +1119,9 @@ def load_image_mask_pairs(image_dir, mask_dir, exclude_mask_dir=None, target_sha
             img = io.imread(image_map[i])
             main_mask = bin_to_labels(io.imread(mask_map[i]))
             
-            num_unique = len(np.unique(main_mask)) - 1  # exclude background (label 0)
-            print(f"    → Detected {num_unique} mask regions")
-
-            print(f"🔍 Processing index {i} → Image shape: {img.shape}, Mask shape: {main_mask.shape}")
+            # num_unique = len(np.unique(main_mask)) - 1  # exclude background (label 0)
+            # print(f"    → Detected {num_unique} mask regions")
+            # print(f"🔍 Processing index {i} → Image shape: {img.shape}, Mask shape: {main_mask.shape}")
 
             if i in exclude_map:
                 exclude_mask = bin_to_labels(io.imread(exclude_map[i]))
@@ -1145,6 +1144,14 @@ def load_image_mask_pairs(image_dir, mask_dir, exclude_mask_dir=None, target_sha
         patch_size = 1000  # or 256 if you want smaller patches
         stride = 1000       # or use patch_size // 2 for overlapping
 
+        '''
+        🔍 Processing index 229 → Image shape: (3264, 4908), Mask shape: (3264, 4908)
+        <tifffile.TiffPages @32039432> invalid offset to first page 32039432
+            → Detected 10 mask regions
+        🔍 Processing index 230 → Image shape: (0,), Mask shape: (3264, 4908)
+        ❌ Skipping index 230 due to invalid image shape: (0,)
+            → Detected 14 mask regions
+        '''
         if img.ndim != 2 or img.shape[0] == 0 or img.shape[1] == 0:
             print(f"❌ Skipping index {i} due to invalid image shape: {img.shape}")
             continue
@@ -1230,6 +1237,20 @@ print(f"🧠 RAM: {process.memory_info().rss / 1024**3:.2f} GB | 🖥️ GPU: {t
 
 print(f"\n🚀 Training model on full dataset with {len(X_train)} images")
 print(f"[🔍] RAM before train: {psutil.virtual_memory().used / 1e9:.2f} GB")
+
+# print("\n🧪 Checking number of mask regions per training image:")
+# for i, mask in enumerate(y_train):
+#     unique_labels = np.unique(mask)
+#     n_masks = len(unique_labels) - (1 if 0 in unique_labels else 0)
+#     print(f"  Train image {i}: {n_masks} masks")
+
+# print("\n🧪 Checking number of mask regions per validation image:")
+# for i, mask in enumerate(y_val):
+#     unique_labels = np.unique(mask)
+#     n_masks = len(unique_labels) - (1 if 0 in unique_labels else 0)
+#     print(f"  Val image {i}: {n_masks} masks")
+
+
 model_path, train_losses, test_losses = train.train_seg(
     model.net,
     train_data=X_train,
@@ -1239,7 +1260,7 @@ model_path, train_losses, test_losses = train.train_seg(
     tn_coords=tn_train,
     test_tn_coords=tn_val,
     batch_size=1,
-    n_epochs=70,                      # increase epochs if nimg_per_epoch is small
+    n_epochs=100,                      # increase epochs if nimg_per_epoch is small
     learning_rate=1e-5,
     weight_decay=0.1,
     nimg_per_epoch=30,                # limits memory usage by simulating small batches
