@@ -1107,7 +1107,7 @@ def load_image_mask_pairs(image_dir, mask_dir, exclude_mask_dir=None, target_sha
     mask_map = {extract_index(f): f for f in mask_files}
     exclude_map = {extract_index(f): f for f in exclude_files} if exclude_mask_dir else {}
 
-    # common_indices = sorted(set(image_map.keys()) & set(mask_map.keys()))[:100]
+    # common_indices = sorted(set(image_map.keys()) & set(mask_map.keys()))[:200]
     common_indices = sorted(set(image_map.keys()) & set(mask_map.keys()))
 
     print(f"📂 {image_dir.name} → {len(common_indices)} matched pairs")
@@ -1118,7 +1118,11 @@ def load_image_mask_pairs(image_dir, mask_dir, exclude_mask_dir=None, target_sha
         try:
             img = io.imread(image_map[i])
             main_mask = bin_to_labels(io.imread(mask_map[i]))
-            # print(f"🔍 Processing index {i} → Image shape: {img.shape}, Mask shape: {main_mask.shape}")
+            
+            num_unique = len(np.unique(main_mask)) - 1  # exclude background (label 0)
+            print(f"    → Detected {num_unique} mask regions")
+
+            print(f"🔍 Processing index {i} → Image shape: {img.shape}, Mask shape: {main_mask.shape}")
 
             if i in exclude_map:
                 exclude_mask = bin_to_labels(io.imread(exclude_map[i]))
@@ -1133,9 +1137,36 @@ def load_image_mask_pairs(image_dir, mask_dir, exclude_mask_dir=None, target_sha
         resized_mask = resize(main_mask.astype(np.uint8), target_shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint8)
         tn_coords = sample_true_negatives_from_resized_mask(resized_mask, num_tns)
 
-        images.append(img)
-        masks.append(main_mask)
-        tns_all.append(tn_coords)
+
+
+        # images.append(img)
+        # masks.append(main_mask)
+        # tns_all.append(tn_coords)
+        patch_size = 1000  # or 256 if you want smaller patches
+        stride = 1000       # or use patch_size // 2 for overlapping
+
+        if img.ndim != 2 or img.shape[0] == 0 or img.shape[1] == 0:
+            print(f"❌ Skipping index {i} due to invalid image shape: {img.shape}")
+            continue
+        H, W = img.shape
+
+        for y in range(0, H - patch_size + 1, stride):
+            for x in range(0, W - patch_size + 1, stride):
+                patch_img = img[y:y + patch_size, x:x + patch_size]
+                patch_mask = main_mask[y:y + patch_size, x:x + patch_size]
+
+                # Skip completely empty patches
+                if np.sum(patch_mask) == 0:
+                    continue
+
+                resized_mask = resize(patch_mask.astype(np.uint8), target_shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint8)
+                tn_coords_patch = sample_true_negatives_from_resized_mask(resized_mask, num_tns)
+
+                images.append(patch_img)
+                masks.append(patch_mask)
+                tns_all.append(tn_coords_patch)
+
+
 
     return images, masks, tns_all
 
@@ -1212,7 +1243,7 @@ model_path, train_losses, test_losses = train.train_seg(
     learning_rate=1e-5,
     weight_decay=0.1,
     nimg_per_epoch=30,                # limits memory usage by simulating small batches
-    model_name=model_name
+    model_name=model_name,
 )
 print("✅ [6] Training complete — saving loss curves...")
 

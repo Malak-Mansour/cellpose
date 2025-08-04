@@ -336,7 +336,7 @@ def train_seg(net, train_data=None, train_labels=None, tn_coords=None, test_tn_c
               n_epochs=100, weight_decay=0.1, normalize=True, compute_flows=False,
               save_path=None, save_every=100, save_each=False, nimg_per_epoch=None,
               nimg_test_per_epoch=None, rescale=False, scale_range=None, bsize=256,
-              min_train_masks=5, model_name=None, class_weights=None):
+              min_train_masks=1, model_name=None, class_weights=None):
     """
     Train the network with images for segmentation.
 
