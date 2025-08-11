@@ -1039,218 +1039,515 @@
 
 
 
-#SHUFFLED UNIFIED FOLDER
-from cellpose import io, models, core, train
-from skimage.measure import label
-from pathlib import Path
-import numpy as np
-import re
-import matplotlib.pyplot as plt
-from skimage.transform import resize
-from sklearn.model_selection import train_test_split
 
-import os
-from skimage.color import label2rgb
-from skimage.io import imsave
-from skimage.util import img_as_ubyte
-from skimage.segmentation import find_boundaries
-import gc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#SHUFFLED UNIFIED FOLDER
+# from cellpose import io, models, core, train
+# from skimage.measure import label
+# from pathlib import Path
+# import numpy as np
+# import re
+# import matplotlib.pyplot as plt
+# from skimage.transform import resize
+# from sklearn.model_selection import train_test_split
+
+# import os
+# from skimage.color import label2rgb
+# from skimage.io import imsave
+# from skimage.util import img_as_ubyte
+# from skimage.segmentation import find_boundaries
+# import gc
+# import torch
+# import psutil
+
+
+# # ------------------ Helper Functions ------------------ #
+# def draw_square_on_image(img, y, x, size=7, color=(255, 0, 0)):
+#     half = size // 2
+#     y1 = max(0, y - half)
+#     y2 = min(img.shape[0], y + half + 1)
+#     x1 = max(0, x - half)
+#     x2 = min(img.shape[1], x + half + 1)
+#     img[y1:y2, x1:x2] = color
+
+# def extract_index(filename):
+#     match = re.search(r"(\d+)", filename.stem)
+#     return int(match.group(1)) if match else None
+
+# def bin_to_labels(mask):
+#     threshold = np.max(mask) * 0.5
+#     binary = mask > threshold
+#     labeled = label(binary.astype(np.uint8), connectivity=1)
+#     return labeled
+
+# def sample_true_negatives_from_resized_mask(resized_mask, num_samples=30):
+#     tn_coords = []
+#     bg_coords = np.argwhere(resized_mask == 0)
+#     if len(bg_coords) > 0:
+#         sampled = bg_coords[np.random.choice(len(bg_coords), min(num_samples, len(bg_coords)), replace=False)]
+#         for yx in sampled:
+#             tn_coords.append((yx[0], yx[1]))
+#     return tn_coords
+
+
+
+# # to work with the dead/chaining cells that should be excluded
+# def load_image_mask_pairs(image_dir, mask_dir, exclude_mask_dir=None, target_shape=(256, 256), num_tns=30):
+#     #NO CHAINING
+#     # image_files = sorted(image_dir.glob("img*.tif"))
+#     # mask_files = sorted(mask_dir.glob("mask*.tif"))    
+
+#     #CHAINING
+#     image_files = sorted(image_dir.glob("t*.tif"))
+#     mask_files = sorted(mask_dir.glob("masks*.tif"))
+
+
+#     exclude_files = sorted(exclude_mask_dir.glob("exclude_*.tif")) if exclude_mask_dir else []
+
+
+#     image_map = {extract_index(f): f for f in image_files}
+#     mask_map = {extract_index(f): f for f in mask_files}
+#     exclude_map = {extract_index(f): f for f in exclude_files} if exclude_mask_dir else {}
+
+#     common_indices = sorted(set(image_map.keys()) & set(mask_map.keys()))[:280]
+#     # common_indices = sorted(set(image_map.keys()) & set(mask_map.keys()))
+
+#     print(f"📂 {image_dir.name} → {len(common_indices)} matched pairs")
+
+#     images, masks, tns_all = [], [], []
+
+#     for i in common_indices:
+#         try:
+#             img = io.imread(image_map[i])
+#             main_mask = bin_to_labels(io.imread(mask_map[i]))
+            
+#             # num_unique = len(np.unique(main_mask)) - 1  # exclude background (label 0)
+#             # print(f"    → Detected {num_unique} mask regions")
+#             # print(f"🔍 Processing index {i} → Image shape: {img.shape}, Mask shape: {main_mask.shape}")
+
+#             if i in exclude_map:
+#                 exclude_mask = bin_to_labels(io.imread(exclude_map[i]))
+#                 # Exclude dead cells/chaining by zeroing out overlapping labels
+#                 main_mask[exclude_mask > 0] = 0
+#             else:
+#                 exclude_mask = None
+#         except Exception as e:
+#             print(f"❌ Skipping index {i} due to read error: {e}")
+#             continue
+
+#         resized_mask = resize(main_mask.astype(np.uint8), target_shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint8)
+#         tn_coords = sample_true_negatives_from_resized_mask(resized_mask, num_tns)
+
+
+
+#         # images.append(img)
+#         # masks.append(main_mask)
+#         # tns_all.append(tn_coords)
+#         patch_size = 1000  # or 256 if you want smaller patches
+#         stride = 1000       # or use patch_size // 2 for overlapping
+
+#         '''
+#         🔍 Processing index 229 → Image shape: (3264, 4908), Mask shape: (3264, 4908)
+#         <tifffile.TiffPages @32039432> invalid offset to first page 32039432
+#             → Detected 10 mask regions
+#         🔍 Processing index 230 → Image shape: (0,), Mask shape: (3264, 4908)
+#         ❌ Skipping index 230 due to invalid image shape: (0,)
+#             → Detected 14 mask regions
+#         '''
+#         if img.ndim != 2 or img.shape[0] == 0 or img.shape[1] == 0:
+#             print(f"❌ Skipping index {i} due to invalid image shape: {img.shape}")
+#             continue
+#         H, W = img.shape
+
+#         for y in range(0, H - patch_size + 1, stride):
+#             for x in range(0, W - patch_size + 1, stride):
+#                 patch_img = img[y:y + patch_size, x:x + patch_size]
+#                 patch_mask = main_mask[y:y + patch_size, x:x + patch_size]
+
+#                 # Skip completely empty patches
+#                 if np.sum(patch_mask) == 0:
+#                     continue
+
+#                 resized_mask = resize(patch_mask.astype(np.uint8), target_shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint8)
+#                 tn_coords_patch = sample_true_negatives_from_resized_mask(resized_mask, num_tns)
+
+#                 images.append(patch_img)
+#                 masks.append(patch_mask)
+#                 tns_all.append(tn_coords_patch)
+
+
+
+#     return images, masks, tns_all
+
+# #NO CHAINING
+# # folder_pairs = [("../flattened_dataset/all_images",
+# #      "../flattened_dataset/all_masks")]
+
+# #CHAINING
+# folder_pairs = [
+#     ("../filtered_DEP_data/3. SKBR3_Static_R1/Images/L3", 
+#      "../filtered_DEP_data/3. SKBR3_Static_R1/Modified_Masks", 
+#      "../filtered_DEP_data/3. SKBR3_Static_R1/Chaining"),
+
+#     ("../filtered_DEP_data/3. SKBR3_Static_R2/Images/L5", 
+#      "../filtered_DEP_data/3. SKBR3_Static_R2/Modified Masks", 
+#      "../filtered_DEP_data/3. SKBR3_Static_R2/Chaining"),
+
+#     ("../filtered_DEP_data/3. SKBR3_Static_R3/Images/L2", 
+#      "../filtered_DEP_data/3. SKBR3_Static_R3/Modified Masks", 
+#      "../filtered_DEP_data/3. SKBR3_Static_R3/Chaining"),
+
+#     ("../filtered_DEP_data/5. Jurkat_ON_OFF_10V_R1/Images/10v_20s-40s_nd_089", 
+#      "../filtered_DEP_data/5. Jurkat_ON_OFF_10V_R1/Modified_masks", 
+#      "../filtered_DEP_data/5. Jurkat_ON_OFF_10V_R1/Chaining"),
+
+#     ("../filtered_DEP_data/5. Jurkat_ON_OFF_10V_R2/Images/10v_20s-40s_nd_090", 
+#      "../filtered_DEP_data/5. Jurkat_ON_OFF_10V_R2/Modified_masks", 
+#      "../filtered_DEP_data/5. Jurkat_ON_OFF_10V_R2/Chaining"),
+# ]
+
+# # Combine all image-mask pairs from all folder pairs
+# combined_images, combined_masks, combined_tns = [], [], []
+
+# print("🔍 [0] Initializing model...")
+# model = models.CellposeModel(gpu=True)
+# # model_name = "fine_model_all_without_chaining"
+# model_name = "fine_model_all_chaining"
+
+# print("🔍 [1] Starting data loading...")
+
+# #NO CHAINING
+# # for img_path, mask_path in folder_pairs:
+# #     print(f"🔍 [1.1] Loading from: {img_path}")
+# #     images, masks, tn_lists = load_image_mask_pairs(Path(img_path), Path(mask_path))
+
+# #CHAINING
+# for img_path, mask_path, exclude_path in folder_pairs:
+#     print(f"🔍 [1.1] Loading from: {img_path}")
+#     images, masks, tn_lists = load_image_mask_pairs(Path(img_path), Path(mask_path), Path(exclude_path))
+
+#     base_idx = len(combined_images)
+#     combined_images.extend(images)
+#     combined_masks.extend(masks)
+#     for i, tn_coords in enumerate(tn_lists):
+#         for y, x in tn_coords:
+#             combined_tns.append((base_idx + i, y, x))
+
+# print(f"\n📊 Total loaded: {len(combined_images)} images")
+# print("🔍 [2] Splitting into train/val...")
+
+# # Split all data into train and val
+# X_train, X_val, y_train, y_val = train_test_split(combined_images, combined_masks, test_size=0.2, random_state=42)
+
+# tn_train = [(i, y, x) for (i, y, x) in combined_tns if i < len(X_train)]
+# tn_val = [(i - len(X_train), y, x) for (i, y, x) in combined_tns if i >= len(X_train)]
+
+# print(f"🔍 [3] Training set: {len(X_train)} | Val set: {len(X_val)}")
+
+
+
+# print("🔍 [3.5] Cleaning up before model init...")
+# torch.cuda.empty_cache()
+# gc.collect()
+
+# process = psutil.Process(os.getpid())
+# print(f"🧠 RAM: {process.memory_info().rss / 1024**3:.2f} GB | 🖥️ GPU: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+
+
+
+
+# print(f"\n🚀 Training model on full dataset with {len(X_train)} images")
+# print(f"[🔍] RAM before train: {psutil.virtual_memory().used / 1e9:.2f} GB")
+
+# # print("\n🧪 Checking number of mask regions per training image:")
+# # for i, mask in enumerate(y_train):
+# #     unique_labels = np.unique(mask)
+# #     n_masks = len(unique_labels) - (1 if 0 in unique_labels else 0)
+# #     print(f"  Train image {i}: {n_masks} masks")
+
+# # print("\n🧪 Checking number of mask regions per validation image:")
+# # for i, mask in enumerate(y_val):
+# #     unique_labels = np.unique(mask)
+# #     n_masks = len(unique_labels) - (1 if 0 in unique_labels else 0)
+# #     print(f"  Val image {i}: {n_masks} masks")
+
+
+# model_path, train_losses, test_losses = train.train_seg(
+#     model.net,
+#     train_data=X_train,
+#     train_labels=y_train,
+#     test_data=X_val,
+#     test_labels=y_val,
+#     tn_coords=tn_train,
+#     test_tn_coords=tn_val,
+#     batch_size=1,
+#     n_epochs=70,                      # increase epochs if nimg_per_epoch is small
+#     learning_rate=1e-5,
+#     weight_decay=0.1,
+#     nimg_per_epoch=30,                # limits memory usage by simulating small batches
+#     model_name=model_name,
+# )
+# print("✅ [6] Training complete — saving loss curves...")
+
+
+# # Plot and save loss curve
+# plt.figure(figsize=(10, 5))
+# plt.plot(train_losses, label="Train Loss")
+# plt.plot(test_losses, label="Val Loss")
+# plt.xlabel("Epoch")
+# plt.ylabel("Loss")
+# plt.title(f"Loss Curve for {model_name}")
+# plt.legend()
+# plt.grid(True)
+
+# loss_dir = Path("loss_curves")
+# loss_dir.mkdir(parents=True, exist_ok=True)
+# plt.savefig(loss_dir / f"loss_curve_{model_name}.png")
+# plt.close('all')
+
+# torch.cuda.empty_cache()
+# gc.collect()
+
+# process = psutil.Process(os.getpid())
+# print(f"🧠 RAM used after cleanup: {process.memory_info().rss / 1024**3:.2f} GB")
+# print(f"🖥️ GPU used after cleanup: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+
+# print(f"📈 Saved loss curve as: loss_curve_{model_name}.png")
+# print(f"💾 Model saved to: {model_path}")
+
+
+
+
+
+
+
+
+
+
+# ========== CONFIG ==========
+
+#NO CHAINING
+# model_name = "fine_model_all_without_chaining"
+# img_pattern = "img"     
+# mask_pattern = "mask"   
+# folder_pairs = [("../flattened_dataset/all_images",
+#      "../flattened_dataset/all_masks")]
+
+
+#CHAINING
+# model_name = "fine_model_all_chaining"
+model_name = "fine_model_all_chaining_tn_2"
+img_pattern = "t"   
+mask_pattern = "masks"   
+folder_pairs = [
+    ("../filtered_DEP_data/3. SKBR3_Static_R1/Images/L3", 
+     "../filtered_DEP_data/3. SKBR3_Static_R1/Modified_Masks", 
+     "../filtered_DEP_data/3. SKBR3_Static_R1/Chaining"),
+
+    ("../filtered_DEP_data/3. SKBR3_Static_R2/Images/L5", 
+     "../filtered_DEP_data/3. SKBR3_Static_R2/Modified Masks", 
+     "../filtered_DEP_data/3. SKBR3_Static_R2/Chaining"),
+
+    ("../filtered_DEP_data/3. SKBR3_Static_R3/Images/L2", 
+     "../filtered_DEP_data/3. SKBR3_Static_R3/Modified Masks", 
+     "../filtered_DEP_data/3. SKBR3_Static_R3/Chaining"),
+
+    ("../filtered_DEP_data/5. Jurkat_ON_OFF_10V_R1/Images/10v_20s-40s_nd_089", 
+     "../filtered_DEP_data/5. Jurkat_ON_OFF_10V_R1/Modified_masks", 
+     "../filtered_DEP_data/5. Jurkat_ON_OFF_10V_R1/Chaining"),
+
+    ("../filtered_DEP_data/5. Jurkat_ON_OFF_10V_R2/Images/10v_20s-40s_nd_090", 
+     "../filtered_DEP_data/5. Jurkat_ON_OFF_10V_R2/Modified_masks", 
+     "../filtered_DEP_data/5. Jurkat_ON_OFF_10V_R2/Chaining"),
+]
+
+
+
+import os, gc, re
 import torch
 import psutil
+import numpy as np
+from pathlib import Path
+from skimage.measure import label
+from skimage.transform import resize
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+
+from cellpose import io, models, train
 
 
-# ------------------ Helper Functions ------------------ #
-def draw_square_on_image(img, y, x, size=7, color=(255, 0, 0)):
-    half = size // 2
-    y1 = max(0, y - half)
-    y2 = min(img.shape[0], y + half + 1)
-    x1 = max(0, x - half)
-    x2 = min(img.shape[1], x + half + 1)
-    img[y1:y2, x1:x2] = color
+# ========== HELPERS ==========
+def generate_patches(mask, patch_size=256, stride=128, num_tns=5):
+    """
+    Generate coordinates of multiple patches from an image.
+    Returns a list of (y, x) tuples for both foreground and background.
+    """
+    coords = []
+    h, w = mask.shape
+
+    # Slide window
+    for y in range(0, h - patch_size + 1, stride):
+        for x in range(0, w - patch_size + 1, stride):
+            patch = mask[y:y+patch_size, x:x+patch_size]
+            # Count labeled objects
+            has_cells = np.max(patch) > 0
+            if has_cells:
+                coords.append(('fg', y + patch_size // 2, x + patch_size // 2))
+            elif len([c for c in coords if c[0] == 'bg']) < num_tns:
+                coords.append(('bg', y + patch_size // 2, x + patch_size // 2))
+
+    return coords
 
 def extract_index(filename):
     match = re.search(r"(\d+)", filename.stem)
     return int(match.group(1)) if match else None
 
 def bin_to_labels(mask):
-    threshold = np.max(mask) * 0.5
-    binary = mask > threshold
-    labeled = label(binary.astype(np.uint8), connectivity=1)
-    return labeled
+    binary = mask > (np.max(mask) * 0.5)
+    return label(binary.astype(np.uint8), connectivity=1)
 
-def sample_true_negatives_from_resized_mask(resized_mask, num_samples=30):
-    tn_coords = []
-    bg_coords = np.argwhere(resized_mask == 0)
-    if len(bg_coords) > 0:
-        sampled = bg_coords[np.random.choice(len(bg_coords), min(num_samples, len(bg_coords)), replace=False)]
-        for yx in sampled:
-            tn_coords.append((yx[0], yx[1]))
-    return tn_coords
+def sample_true_negatives(mask, num_samples=30):
+    coords = np.argwhere(mask == 0)
+    if len(coords) == 0: return []
+    sampled = coords[np.random.choice(len(coords), min(num_samples, len(coords)), replace=False)]
+    return [tuple(x) for x in sampled]
 
 
+# ========== DATA LOADING ==========
+def load_image_mask_pairs(image_dir, mask_dir, exclude_mask_dir):
+    image_dir, mask_dir, exclude_mask_dir = Path(image_dir), Path(mask_dir), Path(exclude_mask_dir)
+    image_files = sorted(image_dir.glob(f"{img_pattern}*.tif"))
+    mask_files = sorted(mask_dir.glob(f"{mask_pattern}*.tif"))
 
-# to work with the dead/chaining cells that should be excluded
-def load_image_mask_pairs(image_dir, mask_dir, exclude_mask_dir=None, target_shape=(256, 256), num_tns=30):
-    #NO CHAINING
-    image_files = sorted(image_dir.glob("img*.tif"))
-    mask_files = sorted(mask_dir.glob("mask*.tif"))    
-
-    #CHAINING
-    # image_files = sorted(image_dir.glob("t*.tif"))
-    # mask_files = sorted(mask_dir.glob("masks*.tif"))
-
-
-    exclude_files = sorted(exclude_mask_dir.glob("exclude_*.tif")) if exclude_mask_dir else []
-
+    exclude_files = []
+    if exclude_mask_dir:
+        exclude_files = sorted(Path(exclude_mask_dir).glob("exclude_*.tif"))
 
     image_map = {extract_index(f): f for f in image_files}
     mask_map = {extract_index(f): f for f in mask_files}
-    exclude_map = {extract_index(f): f for f in exclude_files} if exclude_mask_dir else {}
+    exclude_map = {extract_index(f): f for f in exclude_files}
 
-    # common_indices = sorted(set(image_map.keys()) & set(mask_map.keys()))[:200]
-    common_indices = sorted(set(image_map.keys()) & set(mask_map.keys()))
-
-    print(f"📂 {image_dir.name} → {len(common_indices)} matched pairs")
+    common_ids = sorted(set(image_map) & set(mask_map))
 
     images, masks, tns_all = [], [], []
+    print(f"📂 {image_dir.name} → {len(common_ids)} matched pairs")
 
-    for i in common_indices:
+    for idx in common_ids:
         try:
-            img = io.imread(image_map[i])
-            main_mask = bin_to_labels(io.imread(mask_map[i]))
-            
-            # num_unique = len(np.unique(main_mask)) - 1  # exclude background (label 0)
-            # print(f"    → Detected {num_unique} mask regions")
-            # print(f"🔍 Processing index {i} → Image shape: {img.shape}, Mask shape: {main_mask.shape}")
+            img = io.imread(image_map[idx])
+            mask = bin_to_labels(io.imread(mask_map[idx]))
 
-            if i in exclude_map:
-                exclude_mask = bin_to_labels(io.imread(exclude_map[i]))
-                # Exclude dead cells/chaining by zeroing out overlapping labels
-                main_mask[exclude_mask > 0] = 0
-            else:
-                exclude_mask = None
-        except Exception as e:
-            print(f"❌ Skipping index {i} due to read error: {e}")
-            continue
+            exclude_mask = bin_to_labels(io.imread(exclude_map[idx])) if idx in exclude_map else None
 
-        resized_mask = resize(main_mask.astype(np.uint8), target_shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint8)
-        tn_coords = sample_true_negatives_from_resized_mask(resized_mask, num_tns)
+            if img.ndim != 2 or mask.shape != img.shape:
+                continue
 
+            # Apply chaining exclusion
+            if exclude_mask is not None:
+                mask[exclude_mask > 0] = 0
 
+            # Generate patch-level foreground/background coords
+            coords = generate_patches(mask, patch_size=256, stride=128, num_tns=30)
 
-        # images.append(img)
-        # masks.append(main_mask)
-        # tns_all.append(tn_coords)
-        patch_size = 1000  # or 256 if you want smaller patches
-        stride = 1000       # or use patch_size // 2 for overlapping
-
-        '''
-        🔍 Processing index 229 → Image shape: (3264, 4908), Mask shape: (3264, 4908)
-        <tifffile.TiffPages @32039432> invalid offset to first page 32039432
-            → Detected 10 mask regions
-        🔍 Processing index 230 → Image shape: (0,), Mask shape: (3264, 4908)
-        ❌ Skipping index 230 due to invalid image shape: (0,)
-            → Detected 14 mask regions
-        '''
-        if img.ndim != 2 or img.shape[0] == 0 or img.shape[1] == 0:
-            print(f"❌ Skipping index {i} due to invalid image shape: {img.shape}")
-            continue
-        H, W = img.shape
-
-        for y in range(0, H - patch_size + 1, stride):
-            for x in range(0, W - patch_size + 1, stride):
-                patch_img = img[y:y + patch_size, x:x + patch_size]
-                patch_mask = main_mask[y:y + patch_size, x:x + patch_size]
-
-                # Skip completely empty patches
-                if np.sum(patch_mask) == 0:
-                    continue
-
-                resized_mask = resize(patch_mask.astype(np.uint8), target_shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint8)
-                tn_coords_patch = sample_true_negatives_from_resized_mask(resized_mask, num_tns)
+            for label, y, x in coords:
+                # Extract the patch
+                y0 = max(0, y - 128)
+                x0 = max(0, x - 128)
+                patch_img = img[y0:y0+256, x0:x0+256]
+                patch_mask = mask[y0:y0+256, x0:x0+256]
 
                 images.append(patch_img)
                 masks.append(patch_mask)
-                tns_all.append(tn_coords_patch)
 
+                patch_idx = len(images) - 1
+                tn_coords = []
 
+                # TN from patch selection
+                if label == 'bg':
+                    tn_coords.append((patch_idx, 128, 128))  # patch center
+
+                # TN from chaining mask (in patch coords)
+                if exclude_mask is not None:
+                    patch_excl = exclude_mask[y0:y0+256, x0:x0+256]
+                    chaining_coords = np.argwhere(patch_excl > 0)
+                    for cy, cx in chaining_coords:
+                        tn_coords.append((patch_idx, cy, cx))
+                # images.append(img)
+                # masks.append(mask)
+                # tn_coords = []
+
+                # if label == 'bg':
+                #     tn_coords.append((len(images) - 1, y, x))
+
+                # # Add TNs from chaining (resized to patch size)
+                # if exclude_mask is not None:
+                #     resized_exclude = resize(
+                #         exclude_mask, (256, 256), order=0, preserve_range=True, anti_aliasing=False
+                #     ).astype(np.uint8)
+                #     chaining_coords = np.argwhere(resized_exclude > 0)
+                #     for cy, cx in chaining_coords:
+                #         tn_coords.append((len(images) - 1, cy, cx))
+
+                tns_all.append(tn_coords)
+        except Exception as e:
+            print(f"❌ Skipping index {idx} due to error: {e}")
+            continue
 
     return images, masks, tns_all
 
-#NO CHAINING
-folder_pairs = [("../flattened_dataset/all_images",
-     "../flattened_dataset/all_masks")]
 
-#CHAINING
-# folder_pairs = [("../filtered_DEP_data/3. SKBR3_Static_R1/Images/L3",
-#                  "../filtered_DEP_data/3. SKBR3_Static_R1/Modified_Masks",
-#                  "../filtered_DEP_data/3. SKBR3_Static_R1/Chaining")]
-
-
-# Combine all image-mask pairs from all folder pairs
-combined_images, combined_masks, combined_tns = [], [], []
-
-print("🔍 [0] Initializing model...")
+# ========== MAIN ==========
 model = models.CellposeModel(gpu=True)
-model_name = "fine_model_all_once"
-
-print("🔍 [1] Starting data loading...")
-
-#NO CHAINING
-for img_path, mask_path in folder_pairs:
-    print(f"🔍 [1.1] Loading from: {img_path}")
-    images, masks, tn_lists = load_image_mask_pairs(Path(img_path), Path(mask_path))
-
-#CHAINING
-# for img_path, mask_path, exclude_path in folder_pairs:
-#     images, masks, tn_lists = load_image_mask_pairs(Path(img_path), Path(mask_path), Path(exclude_path))
-
-    base_idx = len(combined_images)
-    combined_images.extend(images)
-    combined_masks.extend(masks)
-    for i, tn_coords in enumerate(tn_lists):
-        for y, x in tn_coords:
-            combined_tns.append((base_idx + i, y, x))
-
-print(f"\n📊 Total loaded: {len(combined_images)} images")
-print("🔍 [2] Splitting into train/val...")
-
-# Split all data into train and val
-X_train, X_val, y_train, y_val = train_test_split(combined_images, combined_masks, test_size=0.2, random_state=42)
-
-tn_train = [(i, y, x) for (i, y, x) in combined_tns if i < len(X_train)]
-tn_val = [(i - len(X_train), y, x) for (i, y, x) in combined_tns if i >= len(X_train)]
-
-print(f"🔍 [3] Training set: {len(X_train)} | Val set: {len(X_val)}")
+all_images, all_masks, all_tns = [], [], []
 
 
+for triplet in folder_pairs:
+    if len(triplet) == 3:
+        img_dir, mask_dir, excl_dir = triplet
+    else:
+        img_dir, mask_dir = triplet
+        excl_dir = None
+    imgs, msks, tns = load_image_mask_pairs(img_dir, mask_dir, excl_dir)
 
-print("🔍 [3.5] Cleaning up before model init...")
+    base_idx = len(all_images)
+    all_images.extend(imgs)
+    all_masks.extend(msks)
+    for i, coords in enumerate(tns):
+        all_tns.extend((base_idx + img_idx, y, x) for img_idx, y, x in coords)
+
+print(f"\n📊 Total images: {len(all_images)}")
+
+# Split
+X_train, X_val, y_train, y_val = train_test_split(all_images, all_masks, test_size=0.2, random_state=42)
+tn_train = [(i, y, x) for (i, y, x) in all_tns if i < len(X_train)]
+tn_val = [(i - len(X_train), y, x) for (i, y, x) in all_tns if i >= len(X_train)]
+
+# Cleanup
 torch.cuda.empty_cache()
 gc.collect()
 
-process = psutil.Process(os.getpid())
-print(f"🧠 RAM: {process.memory_info().rss / 1024**3:.2f} GB | 🖥️ GPU: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+# Memory log
+p = psutil.Process(os.getpid())
+print(f"🧠 RAM: {p.memory_info().rss / 1024**3:.2f} GB | GPU: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
 
-
-
-
-print(f"\n🚀 Training model on full dataset with {len(X_train)} images")
-print(f"[🔍] RAM before train: {psutil.virtual_memory().used / 1e9:.2f} GB")
-
-# print("\n🧪 Checking number of mask regions per training image:")
-# for i, mask in enumerate(y_train):
-#     unique_labels = np.unique(mask)
-#     n_masks = len(unique_labels) - (1 if 0 in unique_labels else 0)
-#     print(f"  Train image {i}: {n_masks} masks")
-
-# print("\n🧪 Checking number of mask regions per validation image:")
-# for i, mask in enumerate(y_val):
-#     unique_labels = np.unique(mask)
-#     n_masks = len(unique_labels) - (1 if 0 in unique_labels else 0)
-#     print(f"  Val image {i}: {n_masks} masks")
-
-
+# Train
+print(f"\n🚀 Training model: {model_name}")
 model_path, train_losses, test_losses = train.train_seg(
     model.net,
     train_data=X_train,
@@ -1260,37 +1557,24 @@ model_path, train_losses, test_losses = train.train_seg(
     tn_coords=tn_train,
     test_tn_coords=tn_val,
     batch_size=1,
-    n_epochs=100,                      # increase epochs if nimg_per_epoch is small
+    n_epochs=70,
     learning_rate=1e-5,
     weight_decay=0.1,
-    nimg_per_epoch=30,                # limits memory usage by simulating small batches
-    model_name=model_name,
+    nimg_per_epoch=30,
+    model_name=model_name
 )
-print("✅ [6] Training complete — saving loss curves...")
 
-
-# Plot and save loss curve
-plt.figure(figsize=(10, 5))
+# Plot
 plt.plot(train_losses, label="Train Loss")
 plt.plot(test_losses, label="Val Loss")
+plt.title(f"Loss Curve: {model_name}")
 plt.xlabel("Epoch")
 plt.ylabel("Loss")
-plt.title(f"Loss Curve for {model_name}")
-plt.legend()
 plt.grid(True)
+plt.legend()
+Path("loss_curves").mkdir(exist_ok=True)
+plt.savefig(f"loss_curves/loss_curve_{model_name}.png")
+plt.close()
 
-loss_dir = Path("loss_curves")
-loss_dir.mkdir(parents=True, exist_ok=True)
-plt.savefig(loss_dir / f"loss_curve_{model_name}.png")
-plt.close('all')
-
-torch.cuda.empty_cache()
-gc.collect()
-
-process = psutil.Process(os.getpid())
-print(f"🧠 RAM used after cleanup: {process.memory_info().rss / 1024**3:.2f} GB")
-print(f"🖥️ GPU used after cleanup: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
-
-print(f"📈 Saved loss curve as: loss_curve_{model_name}.png")
-print(f"💾 Model saved to: {model_path}")
-
+print(f"\n📈 Saved loss curve to: loss_curve_{model_name}.png")
+print(f"💾 Model saved at: {model_path}")
